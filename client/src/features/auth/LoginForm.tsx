@@ -1,10 +1,13 @@
 import { useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
+import { sanitizeRedirect } from '../../lib/sanitizeRedirect'
 
 export function LoginForm() {
   const { login } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
+  const [searchParams] = useSearchParams()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -14,7 +17,7 @@ export function LoginForm() {
     setError(null)
     try {
       await login(email, password)
-      navigate('/')
+      navigate(sanitizeRedirect(searchParams.get('redirect')))
     } catch {
       setError('Invalid email or password')
     }
@@ -39,7 +42,7 @@ export function LoginForm() {
       {error && <p role="alert">{error}</p>}
       <button type="submit">Log in</button>
       <p>
-        No account? <Link to="/register">Register</Link>
+        No account? <Link to={`/register${location.search}`}>Register</Link>
       </p>
     </form>
   )
