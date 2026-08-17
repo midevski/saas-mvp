@@ -10,6 +10,8 @@ const envSchema = z.object({
   REDIS_URL: z.string().min(1),
   JWT_SECRET: z.string().min(1),
   STRIPE_SECRET_KEY: z.string().min(1),
+  STRIPE_WEBHOOK_SECRET: z.string().min(1),
+  STRIPE_PRICE_ID_PRO: z.string().min(1),
   CLIENT_URL: z.string().min(1),
 })
 

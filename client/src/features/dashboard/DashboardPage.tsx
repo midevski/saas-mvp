@@ -4,6 +4,7 @@ import { OrgSwitcher } from './OrgSwitcher'
 import { CreateOrgForm } from './CreateOrgForm'
 import { InviteForm } from './InviteForm'
 import { MembersList } from './MembersList'
+import { GatedFeatureLink } from '../billing/GatedFeatureLink'
 
 export function DashboardPage() {
   const { currentOrg } = useOrg()
@@ -18,6 +19,7 @@ export function DashboardPage() {
         <>
           <InviteForm />
           <MembersList />
+          <GatedFeatureLink />
         </>
       )}
     </div>

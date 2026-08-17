@@ -5,10 +5,15 @@ import { env } from './config/env'
 import { ConflictError, ForbiddenError, NotFoundError } from './lib/errors'
 import { authRouter } from './modules/auth/auth.routes'
 import { orgRouter } from './modules/orgs/org.routes'
+import { billingRouter, billingWebhookRouter } from './modules/billing/billing.routes'
 
 export const app = express()
 
 app.use(cors({ origin: env.CLIENT_URL, credentials: true }))
+
+// Mounted before express.json(): Stripe webhook signature verification needs the raw body
+app.use(billingWebhookRouter)
+
 app.use(express.json())
 app.use(cookieParser())
 
@@ -18,6 +23,7 @@ app.get('/health', (_req, res) => {
 
 app.use('/auth', authRouter)
 app.use(orgRouter)
+app.use(billingRouter)
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof NotFoundError) {
