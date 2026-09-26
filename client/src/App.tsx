@@ -1,4 +1,5 @@
 import { Route, Routes } from 'react-router-dom'
+import { AppShell } from './components/AppShell'
 import { LoginForm } from './features/auth/LoginForm'
 import { RegisterForm } from './features/auth/RegisterForm'
 import { ProtectedRoute } from './features/auth/ProtectedRoute'
@@ -14,9 +15,11 @@ function App() {
       <Route path="/register" element={<RegisterForm />} />
       <Route path="/invites/:token" element={<AcceptInvitePage />} />
       <Route element={<ProtectedRoute />}>
-        <Route path="/" element={<DashboardPage />} />
-        <Route path="/orgs/:orgId/billing" element={<BillingPage />} />
-        <Route path="/orgs/:orgId/board" element={<BoardPage />} />
+        <Route element={<AppShell />}>
+          <Route path="/" element={<DashboardPage />} />
+          <Route path="/orgs/:orgId/billing" element={<BillingPage />} />
+          <Route path="/orgs/:orgId/board" element={<BoardPage />} />
+        </Route>
       </Route>
     </Routes>
   )

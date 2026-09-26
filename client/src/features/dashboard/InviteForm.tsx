@@ -25,26 +25,53 @@ export function InviteForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
-      <h2>Invite a teammate</h2>
-      <label>
-        Email
-        <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-      </label>
-      <label>
-        Role
-        <select value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'member')}>
-          <option value="member">member</option>
-          <option value="admin">admin</option>
-        </select>
-      </label>
-      {error && <p role="alert">{error}</p>}
-      <button type="submit">Send invite</button>
-      {inviteLink && (
-        <p>
-          No email sending yet (Future work) — share this link: <code>{inviteLink}</code>
-        </p>
-      )}
+    <form onSubmit={handleSubmit} className="card">
+      <div className="card-header">
+        <div className="card-title">
+          <span className="eyebrow">Team</span>
+          <h2>Invite a teammate</h2>
+        </div>
+      </div>
+      <div className="card-body stack">
+        <label className="field">
+          <span className="field-label">Email</span>
+          <input
+            className="input"
+            type="email"
+            required
+            placeholder="teammate@company.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </label>
+        <div className="form-row">
+          <label className="field">
+            <span className="field-label">Role</span>
+            <select
+              className="select"
+              value={role}
+              onChange={(e) => setRole(e.target.value as 'admin' | 'member')}
+            >
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
+            </select>
+          </label>
+          <button type="submit" className="btn btn-ink">
+            Send invite
+          </button>
+        </div>
+        {error && (
+          <p role="alert" className="alert">
+            {error}
+          </p>
+        )}
+        {inviteLink && (
+          <div className="notice stack" style={{ gap: 8 }}>
+            <span>No email sending yet (Future work) — share this link:</span>
+            <code>{inviteLink}</code>
+          </div>
+        )}
+      </div>
     </form>
   )
 }

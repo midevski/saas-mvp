@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../../lib/api/axiosInstance'
 import { useOrg } from '../../context/OrgContext'
+import { PageHeader } from '../../components/PageHeader'
+
+const PRO_FEATURES = [
+  'Realtime collaborative board for the whole team',
+  'Changes sync live across every teammate and tab',
+  'Manage or cancel anytime from the billing portal',
+]
 
 interface BillingStatus {
   subscribed: boolean
@@ -78,35 +85,81 @@ export function BillingPage() {
     }
   }
 
+  const renewsOn = status?.currentPeriodEnd ? new Date(status.currentPeriodEnd).toLocaleDateString() : null
+
   return (
-    <div>
-      <p>
-        <Link to="/">Back to dashboard</Link>
-      </p>
-      <h1>Billing</h1>
+    <>
+      <PageHeader
+        eyebrow="Billing"
+        title="Plan & subscription"
+        lede={org ? `Subscription for ${org.name}` : undefined}
+      />
 
-      {checkoutOutcome === 'success' && !status?.subscribed && <p>Activating your subscription...</p>}
-      {checkoutOutcome === 'cancel' && <p>Checkout was canceled.</p>}
-      {error && <p role="alert">{error}</p>}
+      <div className="stack" style={{ maxWidth: '44rem' }}>
+        {checkoutOutcome === 'success' && !status?.subscribed && (
+          <p className="notice">Activating your subscription...</p>
+        )}
+        {checkoutOutcome === 'cancel' && <p className="notice">Checkout was canceled.</p>}
+        {error && (
+          <p role="alert" className="alert">
+            {error}
+          </p>
+        )}
 
-      {status && (
-        <p>
-          Status: <strong>{status.subscribed ? 'Subscribed' : 'Not subscribed'}</strong>
-          {status.status && ` (${status.status})`}
+        <section className="card">
+          <div className="card-header">
+            <div className="card-title">
+              <span className="eyebrow">Current plan</span>
+              <h2>{status?.subscribed ? 'Pro' : 'Free'}</h2>
+            </div>
+            {status && (
+              <span className={status.subscribed ? 'pill pill-success' : 'pill'}>
+                <span className={status.subscribed ? 'dot dot-live' : 'dot dot-off'} />
+                {status.status ?? (status.subscribed ? 'active' : 'not subscribed')}
+              </span>
+            )}
+          </div>
+          <div className="card-body stack">
+            <ul className="stack" style={{ gap: 10 }}>
+              {PRO_FEATURES.map((feature) => (
+                <li key={feature} className="row" style={{ gap: 12 }}>
+                  <span className="dot" />
+                  {feature}
+                </li>
+              ))}
+            </ul>
+            {renewsOn && (
+              <p className="mono faint" style={{ fontSize: '0.8125rem' }}>
+                Current period ends {renewsOn}
+              </p>
+            )}
+            <div className="row" style={{ paddingTop: 8, borderTop: '1px solid var(--color-line)' }}>
+              {role !== 'owner' ? (
+                <p className="muted" style={{ fontSize: '0.875rem', paddingTop: 8 }}>
+                  Only the org owner can manage billing.
+                </p>
+              ) : status?.subscribed ? (
+                <button className="btn btn-outline" onClick={manageBilling} disabled={busy} style={{ marginTop: 8 }}>
+                  Manage billing
+                </button>
+              ) : (
+                <button
+                  className="btn btn-accent"
+                  onClick={upgrade}
+                  disabled={busy || !proPriceId}
+                  style={{ marginTop: 8 }}
+                >
+                  Upgrade to Pro
+                </button>
+              )}
+            </div>
+          </div>
+        </section>
+
+        <p className="mono faint" style={{ fontSize: '0.75rem' }}>
+          Payments run in Stripe test mode — use card 4242 4242 4242 4242.
         </p>
-      )}
-
-      {role !== 'owner' ? (
-        <p>Only the org owner can manage billing.</p>
-      ) : status?.subscribed ? (
-        <button onClick={manageBilling} disabled={busy}>
-          Manage billing
-        </button>
-      ) : (
-        <button onClick={upgrade} disabled={busy || !proPriceId}>
-          Upgrade to Pro
-        </button>
-      )}
-    </div>
+      </div>
+    </>
   )
 }

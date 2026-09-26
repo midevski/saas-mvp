@@ -2,6 +2,8 @@ import { useCallback, useEffect, useReducer, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../../lib/api/axiosInstance'
 import { useSocket } from '../../context/SocketContext'
+import { useOrg } from '../../context/OrgContext'
+import { PageHeader } from '../../components/PageHeader'
 import {
   BOARD_JOIN,
   BOARD_STATE,
@@ -27,31 +29,37 @@ export function BoardPage() {
   const subscribed = useIsSubscribed(orgId)
 
   if (!orgId) return null
+  if (subscribed === null) return <p className="eyebrow">Loading...</p>
+  if (subscribed) return <LiveBoard orgId={orgId} />
 
+  // Checked before attempting board:join — the server would reject it too, but don't rely on that
   return (
-    <div>
-      <p>
-        <Link to="/">Back to dashboard</Link>
-      </p>
-      {subscribed === null ? (
-        <p>Loading...</p>
-      ) : subscribed ? (
-        <LiveBoard orgId={orgId} />
-      ) : (
-        // Checked before attempting board:join — the server would reject it too, but don't rely on that
-        <div>
-          <h1>Collaborative board</h1>
-          <p>
-            The collaborative board requires the Pro plan. <Link to={`/orgs/${orgId}/billing`}>Upgrade</Link>
+    <>
+      <PageHeader eyebrow="Realtime board" title="Collaborative board" />
+      <section className="card-ink" style={{ maxWidth: '44rem' }}>
+        <div className="blueprint-ink" />
+        <div className="glow" style={{ top: '-10rem', right: '-10rem' }} />
+        <div className="card-body stack">
+          <p className="eyebrow">
+            <span className="dot" />
+            Pro feature
           </p>
+          <h2>The collaborative board requires the Pro plan</h2>
+          <p className="muted">Upgrade to give your whole team a live kanban board.</p>
+          <div>
+            <Link to={`/orgs/${orgId}/billing`} className="btn btn-accent">
+              Upgrade to Pro
+            </Link>
+          </div>
         </div>
-      )}
-    </div>
+      </section>
+    </>
   )
 }
 
 function LiveBoard({ orgId }: { orgId: string }) {
   const { socket, isConnected } = useSocket()
+  const { orgs } = useOrg()
   const [state, dispatch] = useReducer(boardReducer, null)
   const [error, setError] = useState<string | null>(null)
 
@@ -114,7 +122,7 @@ function LiveBoard({ orgId }: { orgId: string }) {
     [socket, join],
   )
 
-  if (!state) return <p>Loading board...</p>
+  if (!state) return <p className="eyebrow">Loading board...</p>
 
   function createCard(columnId: string, title: string) {
     // Not optimistic: waits for the server-assigned id
@@ -139,11 +147,24 @@ function LiveBoard({ orgId }: { orgId: string }) {
   }
 
   return (
-    <div>
-      <h1>{state.board.name}</h1>
-      <p>{isConnected ? 'Live' : 'Reconnecting...'}</p>
-      {error && <p role="alert">{error}</p>}
-      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', overflowX: 'auto' }}>
+    <>
+      <PageHeader
+        eyebrow="Realtime board"
+        title={orgs.find((o) => o.id === orgId)?.name ?? state.board.name}
+        lede="Drag cards between columns. Changes appear instantly for everyone on this board."
+        actions={
+          <span className={isConnected ? 'pill pill-success' : 'pill'}>
+            <span className={isConnected ? 'dot dot-live' : 'dot dot-off'} />
+            {isConnected ? 'Live' : 'Reconnecting...'}
+          </span>
+        }
+      />
+      {error && (
+        <p role="alert" className="alert" style={{ marginBottom: 16 }}>
+          {error}
+        </p>
+      )}
+      <div className="board">
         {state.columns.map((column) => (
           <Column
             key={column.id}
@@ -156,6 +177,6 @@ function LiveBoard({ orgId }: { orgId: string }) {
           />
         ))}
       </div>
-    </div>
+    </>
   )
 }

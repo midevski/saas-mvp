@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../../lib/api/axiosInstance'
 import { useAuth } from '../../context/AuthContext'
 import { useOrg } from '../../context/OrgContext'
+import { CenterState } from '../../components/CenterState'
 
 export function AcceptInvitePage() {
   const { token } = useParams<{ token: string }>()
@@ -24,9 +25,27 @@ export function AcceptInvitePage() {
       .catch(() => setError('This invite is invalid or has expired'))
   }, [isLoading, user, token, refreshOrgs, switchOrg, navigate])
 
-  if (isLoading) return <p>Loading...</p>
-  if (!user) return <Navigate to={`/login?redirect=/invites/${token}`} replace />
-  if (error) return <p role="alert">{error}</p>
+  if (!isLoading && !user) return <Navigate to={`/login?redirect=/invites/${token}`} replace />
 
-  return <p>Accepting invite...</p>
+  return (
+    <CenterState>
+      <p className="eyebrow">
+        <span className="dot" />
+        Invitation
+      </p>
+      {error ? (
+        <>
+          <h1>Invite unavailable</h1>
+          <p role="alert" className="muted">
+            {error}
+          </p>
+          <Link to="/" className="btn btn-outline">
+            Go to dashboard
+          </Link>
+        </>
+      ) : (
+        <h1>Accepting invite...</h1>
+      )}
+    </CenterState>
+  )
 }

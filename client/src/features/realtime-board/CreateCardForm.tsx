@@ -12,14 +12,18 @@ export function CreateCardForm({ onCreate }: { onCreate: (title: string) => void
   }
 
   return (
-    <form onSubmit={submit}>
+    <form onSubmit={submit} className="add-card">
       <input
+        className="input"
         value={title}
         onChange={(e) => setTitle(e.target.value)}
-        placeholder="New card"
+        placeholder="Add a card..."
+        aria-label="New card title"
         maxLength={200}
       />
-      <button type="submit">Add</button>
+      <button type="submit" className="btn btn-ink btn-sm" disabled={!title.trim()}>
+        Add
+      </button>
     </form>
   )
 }

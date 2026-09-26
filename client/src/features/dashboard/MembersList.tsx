@@ -47,10 +47,22 @@ export function MembersList() {
   }
 
   return (
-    <div>
-      <h2>Members</h2>
-      {error && <p role="alert">{error}</p>}
-      <ul>
+    <section className="card">
+      <div className="card-header">
+        <div className="card-title">
+          <span className="eyebrow">Team</span>
+          <h2>Members</h2>
+        </div>
+        <span className="pill">{members.length}</span>
+      </div>
+      {error && (
+        <div style={{ padding: '16px 24px 0' }}>
+          <p role="alert" className="alert">
+            {error}
+          </p>
+        </div>
+      )}
+      <ul className="list">
         {members.map((member) => {
           // Mirrors the server rules for a clean UX — the server is the real enforcement point
           const canRemove =
@@ -60,21 +72,35 @@ export function MembersList() {
 
           return (
             <li key={member.userId}>
-              {member.name} ({member.email}) — {member.role}
-              {canRemove && <button onClick={() => removeMember(member.userId)}>Remove</button>}
-              {currentRole === 'owner' && member.role !== 'owner' && (
+              <span className="avatar">{(member.name ?? member.email ?? '?').charAt(0).toUpperCase()}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 500 }}>{member.name}</div>
+                <div className="faint mono" style={{ fontSize: '0.75rem', overflowWrap: 'anywhere' }}>
+                  {member.email}
+                </div>
+              </div>
+              {currentRole === 'owner' && member.role !== 'owner' ? (
                 <select
+                  className="select select-sm"
+                  aria-label={`Role for ${member.name}`}
                   value={member.role}
                   onChange={(e) => changeRole(member.userId, e.target.value as 'admin' | 'member')}
                 >
-                  <option value="member">member</option>
-                  <option value="admin">admin</option>
+                  <option value="member">Member</option>
+                  <option value="admin">Admin</option>
                 </select>
+              ) : (
+                <span className={member.role === 'owner' ? 'pill pill-ink' : 'pill'}>{member.role}</span>
+              )}
+              {canRemove && (
+                <button className="btn btn-danger btn-sm" onClick={() => removeMember(member.userId)}>
+                  Remove
+                </button>
               )}
             </li>
           )
         })}
       </ul>
-    </div>
+    </section>
   )
 }
