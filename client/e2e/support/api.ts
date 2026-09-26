@@ -4,6 +4,7 @@ import type { APIRequestContext, Page } from '@playwright/test'
 // needs but isn't itself testing — e.g. users and memberships before a UI check.
 
 export interface TestUser {
+  id: string
   name: string
   email: string
   password: string
@@ -15,7 +16,7 @@ export async function registerUser(request: APIRequestContext, name: string, ema
   const res = await request.post('/api/auth/register', { data: { name, email, password } })
   if (!res.ok()) throw new Error(`register ${email} failed: ${res.status()} ${await res.text()}`)
   const body = await res.json()
-  return { name, email, password, accessToken: body.accessToken }
+  return { id: body.user.id, name, email, password, accessToken: body.accessToken }
 }
 
 function auth(user: TestUser) {

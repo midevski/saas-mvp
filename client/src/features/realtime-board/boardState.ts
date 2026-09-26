@@ -6,6 +6,20 @@ export interface AttachmentData {
   uploadedAt: string
 }
 
+export interface ChecklistItemData {
+  id: string
+  text: string
+  completed: boolean
+  completedBy: string | null
+  completedAt: string | null
+}
+
+export interface ChecklistData {
+  id: string
+  title: string
+  items: ChecklistItemData[]
+}
+
 export interface CardData {
   id: string
   boardId: string
@@ -15,6 +29,7 @@ export interface CardData {
   order: number
   createdBy: string
   attachments: AttachmentData[]
+  checklists: ChecklistData[]
   createdAt: string
   updatedAt: string
 }
@@ -39,6 +54,12 @@ export type BoardAction =
   | { type: 'moved'; cardId: string; toColumnId: string; toOrder: number }
   | { type: 'updated'; card: CardData }
   | { type: 'deleted'; cardId: string }
+
+// Across all of a card's checklists — for the progress shown in the detail view and on the card face
+export function checklistProgress(checklists: ChecklistData[]) {
+  const items = checklists.flatMap((c) => c.items)
+  return { done: items.filter((i) => i.completed).length, total: items.length }
+}
 
 export function cardsInColumn(cards: CardData[], columnId: string) {
   return cards.filter((c) => c.columnId === columnId).sort((a, b) => a.order - b.order)
@@ -97,6 +118,7 @@ export function boardReducer(state: BoardState | null, action: BoardAction): Boa
                 title: action.card.title,
                 description: action.card.description,
                 attachments: action.card.attachments ?? c.attachments,
+                checklists: action.card.checklists ?? c.checklists,
                 updatedAt: action.card.updatedAt,
               }
             : c,

@@ -4,6 +4,7 @@ import { api } from '../../lib/api/axiosInstance'
 import { ACCEPTED_IMAGE_TYPES, validateImageFile } from '../../lib/imageUpload'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import type { AttachmentData, CardData } from './boardState'
+import { ChecklistSection } from './ChecklistSection'
 
 interface CardDetailViewProps {
   orgId: string
@@ -13,6 +14,8 @@ interface CardDetailViewProps {
   onSave: (card: CardData, title: string, description: string | null) => void
   // REST responses carry the updated card; applying them right away avoids waiting for the broadcast
   onCardChanged: (card: CardData) => void
+  // Re-sync the board from the server after a failed change
+  onResync: () => void
 }
 
 interface UploadState {
@@ -38,7 +41,7 @@ function uploadError(err: unknown, filename: string) {
   }
 }
 
-export function CardDetailView({ orgId, card, onClose, onSave, onCardChanged }: CardDetailViewProps) {
+export function CardDetailView({ orgId, card, onClose, onSave, onCardChanged, onResync }: CardDetailViewProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [title, setTitle] = useState(card.title)
   const [description, setDescription] = useState(card.description ?? '')
@@ -252,6 +255,8 @@ export function CardDetailView({ orgId, card, onClose, onSave, onCardChanged }: 
             </p>
           ))}
         </section>
+
+        <ChecklistSection orgId={orgId} card={card} onCardChanged={onCardChanged} onResync={onResync} />
       </div>
 
       {preview && <Lightbox attachment={preview} onClose={() => setPreview(null)} />}

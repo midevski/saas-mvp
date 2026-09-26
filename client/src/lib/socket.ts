@@ -1,5 +1,5 @@
 import { io, type Socket } from 'socket.io-client'
-import { getAccessToken, refreshAccessTokenOnce } from './api/axiosInstance'
+import { api, getAccessToken, refreshAccessTokenOnce } from './api/axiosInstance'
 import { UNAUTHORIZED } from './socketEvents'
 
 // Same origin — Vite proxies /socket.io to the server (see vite.config.ts).
@@ -24,4 +24,12 @@ socket.on('connect_error', async (err) => {
   refreshedSinceLastConnect = true
   const token = await refreshAccessTokenOnce()
   if (token) socket.connect()
+})
+
+// REST calls that change the board (attachments, checklists) are broadcast to everyone on it.
+// Telling the server which socket is ours lets it skip us: we apply the HTTP response instead,
+// and our own echo arriving mid-way through a burst of quick changes would briefly undo them.
+api.interceptors.request.use((config) => {
+  if (socket.id) config.headers['X-Socket-Id'] = socket.id
+  return config
 })

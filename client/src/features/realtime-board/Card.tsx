@@ -1,5 +1,5 @@
 import { useState, type MouseEvent } from 'react'
-import type { CardData } from './boardState'
+import { checklistProgress, type CardData } from './boardState'
 
 // Custom drag type so the column only accepts board cards, not arbitrary dragged text
 export const CARD_DRAG_TYPE = 'application/x-board-card'
@@ -23,9 +23,19 @@ function PaperclipIcon() {
   )
 }
 
+function ChecklistIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="3" />
+      <path d="m8 12.5 2.8 2.8L16.5 9" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 export function Card({ card, dropBefore, onOpen, onDelete }: CardProps) {
   const [isDragging, setIsDragging] = useState(false)
   const cover = card.attachments[0]
+  const checklist = checklistProgress(card.checklists)
   const classes = ['board-card', isDragging && 'dragging', dropBefore && 'drop-before'].filter(Boolean).join(' ')
 
   // Buttons on the card do their own thing instead of also opening it
@@ -57,6 +67,16 @@ export function Card({ card, dropBefore, onOpen, onDelete }: CardProps) {
       </button>
       {card.description && <p className="board-card-desc">{card.description}</p>}
       <div className="board-card-footer">
+        {checklist.total > 0 && (
+          <span
+            className={`board-card-badge${checklist.done === checklist.total ? ' is-complete' : ''}`}
+            title="Checklist progress"
+            aria-label={`Checklist: ${checklist.done} of ${checklist.total} done`}
+          >
+            <ChecklistIcon />
+            {checklist.done}/{checklist.total}
+          </span>
+        )}
         {card.attachments.length > 0 && (
           <span
             className="board-card-badge"

@@ -3,6 +3,7 @@ import { requireAuth } from '../../middleware/requireAuth'
 import { requireRole } from '../../middleware/requireRole'
 import { requireSubscription } from '../../middleware/requireSubscription'
 import * as boardController from './board.controller'
+import * as checklistController from './checklist.controller'
 
 export const boardRouter = Router()
 
@@ -25,3 +26,12 @@ boardRouter.delete(
   ...boardAccess,
   boardController.deleteAttachmentHandler,
 )
+
+// Checklists: part of managing cards, so the same gate (every role can manage cards)
+const checklists = '/orgs/:orgId/board/cards/:cardId/checklists'
+boardRouter.post(checklists, ...boardAccess, checklistController.createChecklistHandler)
+boardRouter.patch(`${checklists}/:checklistId`, ...boardAccess, checklistController.renameChecklistHandler)
+boardRouter.delete(`${checklists}/:checklistId`, ...boardAccess, checklistController.deleteChecklistHandler)
+boardRouter.post(`${checklists}/:checklistId/items`, ...boardAccess, checklistController.addItemHandler)
+boardRouter.patch(`${checklists}/:checklistId/items/:itemId`, ...boardAccess, checklistController.updateItemHandler)
+boardRouter.delete(`${checklists}/:checklistId/items/:itemId`, ...boardAccess, checklistController.deleteItemHandler)

@@ -809,3 +809,205 @@ describe('card attachments', () => {
     })
   })
 })
+
+describe('card checklists', () => {
+  async function setupCard() {
+    const { owner, member, orgId } = await setupSubscribedOrg()
+    const state = await boardService.getBoardState(orgId)
+    const card = await boardService.createCard(state.board.id, state.columns[0]!.id, 'Launch', owner.userId)
+    const base = `/orgs/${orgId}/board/cards/${card.id}/checklists`
+    return { owner, member, orgId, card, base }
+  }
+
+  const post = (path: string, token: string, body: object = {}) => request(app).post(path).set(authed(token)).send(body)
+  const patch = (path: string, token: string, body: object) => request(app).patch(path).set(authed(token)).send(body)
+  const del = (path: string, token: string) => request(app).delete(path).set(authed(token))
+
+  async function checklistWithItems(base: string, token: string, texts: string[]) {
+    const created = await post(base, token, { title: 'Launch steps' })
+    const checklistId = created.body.card.checklists[0].id as string
+    let card = created.body.card
+    for (const text of texts) card = (await post(`${base}/${checklistId}/items`, token, { text })).body.card
+    const itemIds = (card.checklists[0].items as { id: string }[]).map((i) => i.id)
+    return { checklistId, itemIds, itemsPath: `${base}/${checklistId}/items` }
+  }
+
+  async function storedItem(cardId: string, itemId: string) {
+    const card = await Card.findById(cardId)
+    return card!.checklists.flatMap((c) => c.items).find((i) => i._id.toString() === itemId)!
+  }
+
+  it('creates checklists (default title "Checklist"), renames and deletes them', async () => {
+    const { member, base } = await setupCard()
+
+    const first = await post(base, member.accessToken)
+    expect(first.status).toBe(201)
+    expect(first.body.card.checklists).toEqual([{ id: expect.any(String), title: 'Checklist', items: [] }])
+
+    const second = await post(base, member.accessToken, { title: '  Acceptance criteria  ' })
+    expect(second.body.card.checklists.map((c: { title: string }) => c.title)).toEqual([
+      'Checklist',
+      'Acceptance criteria',
+    ])
+
+    const id = first.body.card.checklists[0].id
+    const renamed = await patch(`${base}/${id}`, member.accessToken, { title: 'Subtasks' })
+    expect(renamed.status).toBe(200)
+    expect(renamed.body.card.checklists[0].title).toBe('Subtasks')
+
+    const deleted = await del(`${base}/${id}`, member.accessToken)
+    expect(deleted.body.card.checklists.map((c: { title: string }) => c.title)).toEqual(['Acceptance criteria'])
+    expect((await del(`${base}/${id}`, member.accessToken)).status).toBe(404)
+  })
+
+  it('deleting a checklist removes all of its items', async () => {
+    const { member, base, card } = await setupCard()
+    const { checklistId } = await checklistWithItems(base, member.accessToken, ['a', 'b', 'c'])
+    await del(`${base}/${checklistId}`, member.accessToken)
+    expect((await Card.findById(card.id))!.checklists).toHaveLength(0)
+  })
+
+  it('adds, renames and deletes items without touching the others', async () => {
+    const { member, base } = await setupCard()
+    const { itemIds, itemsPath } = await checklistWithItems(base, member.accessToken, ['Write copy', 'Ship'])
+
+    const renamed = await patch(`${itemsPath}/${itemIds[0]}`, member.accessToken, { text: 'Write final copy' })
+    expect(renamed.body.card.checklists[0].items.map((i: { text: string }) => i.text)).toEqual([
+      'Write final copy',
+      'Ship',
+    ])
+
+    const deleted = await del(`${itemsPath}/${itemIds[0]}`, member.accessToken)
+    expect(deleted.body.card.checklists[0].items).toEqual([
+      { id: itemIds[1], text: 'Ship', completed: false, completedBy: null, completedAt: null },
+    ])
+    expect((await del(`${itemsPath}/${itemIds[0]}`, member.accessToken)).status).toBe(404)
+  })
+
+  it('records who checked an item and when — from the auth token, never the body — and clears it on uncheck', async () => {
+    const { owner, member, base, card } = await setupCard()
+    const { itemIds, itemsPath } = await checklistWithItems(base, owner.accessToken, ['Review'])
+    const itemPath = `${itemsPath}/${itemIds[0]}`
+
+    const before = Date.now()
+    // A forged completedBy in the body is ignored
+    const checked = await patch(itemPath, member.accessToken, { completed: true, completedBy: owner.userId })
+    expect(checked.status).toBe(200)
+    let stored = await storedItem(card.id, itemIds[0]!)
+    expect(stored.completed).toBe(true)
+    expect(stored.completedBy!.toString()).toBe(member.userId)
+    expect(stored.completedAt!.getTime()).toBeGreaterThanOrEqual(before - 1000)
+    const firstCheckedAt = stored.completedAt!.getTime()
+
+    // Checking an already-checked item doesn't steal the credit or reset the time
+    await patch(itemPath, owner.accessToken, { completed: true })
+    stored = await storedItem(card.id, itemIds[0]!)
+    expect(stored.completedBy!.toString()).toBe(member.userId)
+    expect(stored.completedAt!.getTime()).toBe(firstCheckedAt)
+
+    // Renaming a checked item leaves it checked
+    await patch(itemPath, owner.accessToken, { text: 'Review PR' })
+    stored = await storedItem(card.id, itemIds[0]!)
+    expect(stored.text).toBe('Review PR')
+    expect(stored.completed).toBe(true)
+
+    const unchecked = await patch(itemPath, owner.accessToken, { completed: false })
+    expect(unchecked.body.card.checklists[0].items[0]).toMatchObject({
+      completed: false,
+      completedBy: null,
+      completedAt: null,
+    })
+    stored = await storedItem(card.id, itemIds[0]!)
+    expect(stored.completedBy).toBeNull()
+    expect(stored.completedAt).toBeNull()
+  })
+
+  it('concurrent toggles of different items both stick (atomic updates)', async () => {
+    const { owner, member, base, card } = await setupCard()
+    const { itemIds, itemsPath } = await checklistWithItems(base, owner.accessToken, ['a', 'b', 'c', 'd'])
+
+    await Promise.all(
+      itemIds.map((itemId, i) =>
+        patch(`${itemsPath}/${itemId}`, i % 2 ? owner.accessToken : member.accessToken, { completed: true }),
+      ),
+    )
+    const stored = (await Card.findById(card.id))!.checklists[0]!.items
+    expect(stored.map((i) => i.completed)).toEqual([true, true, true, true])
+  })
+
+  it('validates input', async () => {
+    const { member, base } = await setupCard()
+    const { itemIds, itemsPath, checklistId } = await checklistWithItems(base, member.accessToken, ['a'])
+
+    expect((await post(base, member.accessToken, { title: '   ' })).status).toBe(400)
+    expect((await patch(`${base}/${checklistId}`, member.accessToken, {})).status).toBe(400)
+    expect((await post(itemsPath, member.accessToken, { text: '' })).status).toBe(400)
+    expect((await post(itemsPath, member.accessToken, { text: 'x'.repeat(501) })).status).toBe(400)
+    expect((await patch(`${itemsPath}/${itemIds[0]}`, member.accessToken, {})).status).toBe(400)
+    expect((await patch(`${itemsPath}/${itemIds[0]}`, member.accessToken, { completed: 'yes' })).status).toBe(400)
+    expect((await post(`${base}/not-an-id/items`, member.accessToken, { text: 'x' })).status).toBe(404)
+  })
+
+  it('caps checklists per card', async () => {
+    const { member, base } = await setupCard()
+    for (let i = 0; i < 20; i++) expect((await post(base, member.accessToken)).status).toBe(201)
+    const over = await post(base, member.accessToken)
+    expect(over.status).toBe(409)
+    expect(over.body.error).toMatch(/at most 20 checklists/)
+  })
+
+  it("broadcasts card:updated to the board, except the requester's own socket", async () => {
+    const { owner, member, orgId, base } = await setupCard()
+    const requester = await connect(member.accessToken)
+    const viewer = await connect(owner.accessToken)
+    await joinBoard(requester, orgId)
+    await joinBoard(viewer, orgId)
+
+    const viewerGetsIt = nextEvent(viewer, CARD_UPDATED)
+    const requesterDoesNot = expectNoEvent(requester, CARD_UPDATED)
+    await request(app)
+      .post(base)
+      .set(authed(member.accessToken))
+      .set('X-Socket-Id', requester.id!)
+      .send({ title: 'Live' })
+
+    expect((await viewerGetsIt).card.checklists[0].title).toBe('Live')
+    await requesterDoesNot
+  })
+
+  describe('permissions match every other card mutation', () => {
+    it('rejects unauthenticated requests', async () => {
+      const { base } = await setupCard()
+      expect((await request(app).post(base).send({})).status).toBe(401)
+    })
+
+    it('rejects non-members with 404', async () => {
+      const { owner, base } = await setupCard()
+      const { itemIds, itemsPath } = await checklistWithItems(base, owner.accessToken, ['a'])
+      const outsider = await registerUser('outsider@example.com')
+      expect((await post(base, outsider.accessToken)).status).toBe(404)
+      expect((await patch(`${itemsPath}/${itemIds[0]}`, outsider.accessToken, { completed: true })).status).toBe(404)
+    })
+
+    it('rejects unsubscribed orgs with 402', async () => {
+      const { owner, orgId, base } = await setupCard()
+      const { itemIds, itemsPath } = await checklistWithItems(base, owner.accessToken, ['a'])
+      await Subscription.updateOne({ orgId }, { status: 'canceled' })
+      expect((await post(base, owner.accessToken)).status).toBe(402)
+      expect((await patch(`${itemsPath}/${itemIds[0]}`, owner.accessToken, { completed: true })).status).toBe(402)
+    })
+
+    it("rejects reaching another org's card through your own org's route", async () => {
+      const { owner, card, base } = await setupCard()
+      const { itemIds, checklistId } = await checklistWithItems(base, owner.accessToken, ['a'])
+      const attacker = await registerUser('attacker@example.com')
+      const attackerOrg = await request(app).post('/orgs').set(authed(attacker.accessToken)).send({ name: 'Evil' })
+      await subscribe(attackerOrg.body.org.id)
+      const via = `/orgs/${attackerOrg.body.org.id}/board/cards/${card.id}/checklists/${checklistId}`
+
+      expect((await patch(`${via}/items/${itemIds[0]}`, attacker.accessToken, { completed: true })).status).toBe(404)
+      expect((await del(via, attacker.accessToken)).status).toBe(404)
+      expect((await Card.findById(card.id))!.checklists[0]!.items[0]!.completed).toBe(false)
+    })
+  })
+})

@@ -227,6 +227,7 @@ function LiveBoard({ orgId }: { orgId: string }) {
           onClose={() => setOpenCardId(null)}
           onSave={updateCard}
           onCardChanged={(card) => dispatch({ type: 'updated', card })}
+          onResync={join}
         />
       )}
     </LiveCursorsProvider>

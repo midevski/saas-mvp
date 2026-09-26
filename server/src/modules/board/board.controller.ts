@@ -4,7 +4,7 @@ import multer from 'multer'
 import { NotFoundError, PayloadTooLargeError, ValidationError } from '../../lib/errors'
 import { paramAsString } from '../../lib/params'
 import { CARD_UPDATED } from '../../realtime/events'
-import { emitToOrg } from '../../realtime/emitter'
+import { emitToOrg, requesterSocketId } from '../../realtime/emitter'
 import { MAX_IMAGE_BYTES } from '../../uploads/imageType'
 import { deleteImage, uploadImage } from '../../uploads/storage'
 import * as boardService from './board.service'
@@ -35,7 +35,7 @@ export function receiveImage(req: Request, res: Response, next: NextFunction) {
 
 // The card must belong to the org in the URL — the route's role/subscription checks were for
 // that org, so a card from any other org is treated as not found
-async function cardInOrg(req: Request) {
+export async function cardInOrg(req: Request) {
   const orgId = paramAsString(req.params.orgId)!
   const cardId = paramAsString(req.params.cardId)
   if (!cardId || !mongoose.isValidObjectId(cardId)) throw new NotFoundError('Card not found')
@@ -71,7 +71,7 @@ export async function uploadAttachmentHandler(req: Request, res: Response) {
   }
 
   // An attachment change is a card update: everyone on the board gets it live
-  emitToOrg(orgId, CARD_UPDATED, { card: result.card })
+  emitToOrg(orgId, CARD_UPDATED, { card: result.card }, requesterSocketId(req.get('x-socket-id')))
   res.status(201).json(result)
 }
 
@@ -81,7 +81,7 @@ export async function deleteAttachmentHandler(req: Request, res: Response) {
   if (!attachmentId || !mongoose.isValidObjectId(attachmentId)) throw new NotFoundError('Attachment not found')
 
   const { card, publicId } = await boardService.removeAttachment(cardId, attachmentId)
-  emitToOrg(orgId, CARD_UPDATED, { card })
+  emitToOrg(orgId, CARD_UPDATED, { card }, requesterSocketId(req.get('x-socket-id')))
 
   // The attachment is already gone from the card; a storage hiccup just leaves an orphan file
   await deleteImage(publicId).catch((err: Error) =>

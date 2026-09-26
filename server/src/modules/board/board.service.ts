@@ -2,7 +2,7 @@ import type { Types } from 'mongoose'
 import { NotFoundError } from '../../lib/errors'
 import { Board, type BoardDocument } from './board.model'
 import { deleteImage } from '../../uploads/storage'
-import { Card, type AttachmentDocument, type CardDocument } from './card.model'
+import { Card, type AttachmentDocument, type CardDocument, type ChecklistDocument } from './card.model'
 import { Column, type ColumnDocument } from './column.model'
 
 const DEFAULT_COLUMNS = ['To Do', 'In Progress', 'Done']
@@ -18,6 +18,7 @@ export interface CardDTO {
   order: number
   createdBy: string
   attachments: AttachmentDTO[]
+  checklists: ChecklistDTO[]
   createdAt: Date
   updatedAt: Date
 }
@@ -41,7 +42,35 @@ function toAttachmentDTO(attachment: AttachmentDocument): AttachmentDTO {
   }
 }
 
-function toCardDTO(card: WithId<CardDocument>): CardDTO {
+export interface ChecklistItemDTO {
+  id: string
+  text: string
+  completed: boolean
+  completedBy: string | null
+  completedAt: Date | null
+}
+
+export interface ChecklistDTO {
+  id: string
+  title: string
+  items: ChecklistItemDTO[]
+}
+
+function toChecklistDTO(checklist: ChecklistDocument): ChecklistDTO {
+  return {
+    id: checklist._id.toString(),
+    title: checklist.title,
+    items: (checklist.items ?? []).map((item) => ({
+      id: item._id.toString(),
+      text: item.text,
+      completed: item.completed,
+      completedBy: item.completedBy ? item.completedBy.toString() : null,
+      completedAt: item.completedAt,
+    })),
+  }
+}
+
+export function toCardDTO(card: WithId<CardDocument>): CardDTO {
   return {
     id: card._id.toString(),
     boardId: card.boardId.toString(),
@@ -51,6 +80,7 @@ function toCardDTO(card: WithId<CardDocument>): CardDTO {
     order: card.order,
     createdBy: card.createdBy.toString(),
     attachments: (card.attachments ?? []).map(toAttachmentDTO),
+    checklists: (card.checklists ?? []).map(toChecklistDTO),
     createdAt: card.createdAt,
     updatedAt: card.updatedAt,
   }
