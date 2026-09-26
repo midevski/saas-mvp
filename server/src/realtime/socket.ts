@@ -6,6 +6,7 @@ import { env } from '../config/env'
 import type { AuthPayload } from '../middleware/requireAuth'
 import { verifyAccessToken } from '../modules/auth/auth.service'
 import { registerBoardHandlers } from './boardSocket'
+import { setRealtimeServer } from './emitter'
 import { orgRoom, PRESENCE_UPDATE, UNAUTHORIZED } from './events'
 import { MemoryPresenceStore, PresenceBroadcaster, RedisPresenceStore, type PresenceStore } from './presence'
 
@@ -34,6 +35,9 @@ export function createSocketServer(
     // Redis-backed rooms/broadcasts, so multiple server instances share one realtime state
     io.adapter(createAdapter(redis, redis.duplicate()))
   }
+  // REST handlers broadcast through this (e.g. attachment uploads -> card:updated)
+  setRealtimeServer(io)
+
   const presence: PresenceStore = redis ? new RedisPresenceStore(redis) : new MemoryPresenceStore()
   const broadcaster = new PresenceBroadcaster(presence, (orgId, onlineUserIds) =>
     io.to(orgRoom(orgId)).emit(PRESENCE_UPDATE, { onlineUserIds }),

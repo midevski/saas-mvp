@@ -1,3 +1,11 @@
+export interface AttachmentData {
+  id: string
+  url: string
+  filename: string
+  uploadedBy: string
+  uploadedAt: string
+}
+
 export interface CardData {
   id: string
   boardId: string
@@ -6,6 +14,7 @@ export interface CardData {
   description: string | null
   order: number
   createdBy: string
+  attachments: AttachmentData[]
   createdAt: string
   updatedAt: string
 }
@@ -83,7 +92,13 @@ export function boardReducer(state: BoardState | null, action: BoardAction): Boa
         ...state,
         cards: state.cards.map((c) =>
           c.id === action.card.id
-            ? { ...c, title: action.card.title, description: action.card.description, updatedAt: action.card.updatedAt }
+            ? {
+                ...c,
+                title: action.card.title,
+                description: action.card.description,
+                attachments: action.card.attachments ?? c.attachments,
+                updatedAt: action.card.updatedAt,
+              }
             : c,
         ),
       }

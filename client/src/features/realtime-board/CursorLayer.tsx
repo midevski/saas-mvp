@@ -11,18 +11,22 @@ const SEND_INTERVAL_MS = 40
 // Someone whose mouse has been still this long fades out rather than sitting frozen on screen
 const IDLE_HIDE_MS = 5_000
 
-// Two coordinate spaces, because the board's columns scroll but the rest of the page doesn't:
-//   'board' — pixels relative to the board's content track. Its layout is identical for every
-//             viewer, so these are exact regardless of window size or board scroll.
-//   'page'  — pixels relative to the board page container (header, gaps, margins around the
-//             board). Exact for elements at the same offset for everyone (e.g. the title);
-//             text that wraps differently in a narrower window can shift slightly.
-type CursorArea = 'board' | 'page'
+// Three coordinate spaces, because different parts of the page scroll independently:
+//   'column' — pixels relative to one column's card list content (each list scrolls on its own,
+//              so a card is at the same spot for everyone however far they've scrolled it).
+//   'board'  — pixels relative to the board's content track (column headers, add-card forms,
+//              gaps). Its layout is identical for every viewer, so these are exact regardless of
+//              window size or board scroll.
+//   'page'   — pixels relative to the board page container (header, gaps, margins around the
+//              board). Exact for elements at the same offset for everyone (e.g. the title);
+//              text that wraps differently in a narrower window can shift slightly.
+type CursorArea = 'board' | 'page' | 'column'
 
 interface CursorPosition {
   x: number
   y: number
   area: CursorArea
+  columnId?: string // only for 'column'
 }
 
 interface RemoteCursor extends CursorPosition {
@@ -49,7 +53,8 @@ export function LiveCursorsProvider({ orgId, pageRef, boardRef, trackRef, childr
 
   // Outgoing: my pointer position, throttled
   useEffect(() => {
-    // volatile: while disconnected, cursor frames are dropped rather than queued and replayed
+    // volatile: while disconnected, cursor frames are dropped rather than queued and replayed.
+    // (columnId is only present for 'column' positions.)
     const throttle = createCursorThrottle<CursorPosition>(SEND_INTERVAL_MS, (position) =>
       socket.volatile.emit(CURSOR_MOVE, { orgId, ...position }),
     )
@@ -66,6 +71,24 @@ export function LiveCursorsProvider({ orgId, pageRef, boardRef, trackRef, childr
         e.clientX >= b.left && e.clientX <= b.right && e.clientY >= b.top && e.clientY <= Math.min(b.bottom, t.bottom)
 
       if (overBoard) {
+        // Over a column's card list? Position relative to its (independently scrolled) content
+        for (const list of track.querySelectorAll<HTMLElement>('[data-cursor-column]')) {
+          const viewport = list.parentElement!.getBoundingClientRect()
+          const inside =
+            e.clientX >= viewport.left &&
+            e.clientX <= viewport.right &&
+            e.clientY >= viewport.top &&
+            e.clientY <= viewport.bottom
+          if (!inside) continue
+          const content = list.getBoundingClientRect() // already reflects the list's scroll
+          throttle.push({
+            x: Math.round(e.clientX - content.left),
+            y: Math.round(e.clientY - content.top),
+            area: 'column',
+            columnId: list.dataset.cursorColumn!,
+          })
+          return
+        }
         throttle.push({ x: Math.round(e.clientX - t.left), y: Math.round(e.clientY - t.top), area: 'board' })
       } else {
         const p = page.getBoundingClientRect()
@@ -95,8 +118,14 @@ export function LiveCursorsProvider({ orgId, pageRef, boardRef, trackRef, childr
 
   // Incoming: everyone else's positions
   useEffect(() => {
-    const onUpdate = (update: { userId: string; x: number | null; y: number | null; area: CursorArea | null }) => {
-      const { userId, x, y, area } = update
+    const onUpdate = (update: {
+      userId: string
+      x: number | null
+      y: number | null
+      area: CursorArea | null
+      columnId?: string
+    }) => {
+      const { userId, x, y, area, columnId } = update
       if (userId === myId) return // my own other tab
       setCursors((prev) => {
         if (x === null || y === null || area === null) {
@@ -104,7 +133,7 @@ export function LiveCursorsProvider({ orgId, pageRef, boardRef, trackRef, childr
           delete next[userId]
           return next
         }
-        return { ...prev, [userId]: { x, y, area, at: Date.now() } }
+        return { ...prev, [userId]: { x, y, area, columnId, at: Date.now() } }
       })
     }
     socket.on(CURSOR_UPDATE, onUpdate)
@@ -118,7 +147,8 @@ export function LiveCursorsProvider({ orgId, pageRef, boardRef, trackRef, childr
 
 // Draws the cursors currently in one area. pointer-events: none — never blocks the page.
 // The browser moves each layer with its own content, so scrolling needs no recalculation.
-export function CursorLayer({ area }: { area: CursorArea }) {
+// `columnId` is required for area="column": that layer lives inside the column's list content
+export function CursorLayer({ area, columnId }: { area: CursorArea; columnId?: string }) {
   const cursors = useContext(CursorsContext)
   const { onlineMembers } = usePresence()
   const [now, setNow] = useState(() => Date.now())
@@ -138,6 +168,7 @@ export function CursorLayer({ area }: { area: CursorArea }) {
       {Object.entries(cursors).map(([userId, cursor]) => {
         const member = onlineById.get(userId)
         if (!member || cursor.area !== area) return null
+        if (area === 'column' && cursor.columnId !== columnId) return null
         const color = colorForUser(userId)
         const label = member.name?.split(/\s+/)[0] || member.email?.split('@')[0] || 'Someone'
         const idle = now - cursor.at > IDLE_HIDE_MS

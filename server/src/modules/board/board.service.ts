@@ -1,7 +1,8 @@
 import type { Types } from 'mongoose'
 import { NotFoundError } from '../../lib/errors'
 import { Board, type BoardDocument } from './board.model'
-import { Card, type CardDocument } from './card.model'
+import { deleteImage } from '../../uploads/storage'
+import { Card, type AttachmentDocument, type CardDocument } from './card.model'
 import { Column, type ColumnDocument } from './column.model'
 
 const DEFAULT_COLUMNS = ['To Do', 'In Progress', 'Done']
@@ -16,8 +17,28 @@ export interface CardDTO {
   description: string | null
   order: number
   createdBy: string
+  attachments: AttachmentDTO[]
   createdAt: Date
   updatedAt: Date
+}
+
+// The storage publicId stays server-side; clients only need the URL
+export interface AttachmentDTO {
+  id: string
+  url: string
+  filename: string
+  uploadedBy: string
+  uploadedAt: Date
+}
+
+function toAttachmentDTO(attachment: AttachmentDocument): AttachmentDTO {
+  return {
+    id: attachment._id.toString(),
+    url: attachment.url,
+    filename: attachment.filename,
+    uploadedBy: attachment.uploadedBy.toString(),
+    uploadedAt: attachment.uploadedAt,
+  }
 }
 
 function toCardDTO(card: WithId<CardDocument>): CardDTO {
@@ -29,6 +50,7 @@ function toCardDTO(card: WithId<CardDocument>): CardDTO {
     description: card.description,
     order: card.order,
     createdBy: card.createdBy.toString(),
+    attachments: (card.attachments ?? []).map(toAttachmentDTO),
     createdAt: card.createdAt,
     updatedAt: card.updatedAt,
   }
@@ -165,5 +187,43 @@ export async function updateCard(
 export async function deleteCard(cardId: string): Promise<{ cardId: string; columnId: string }> {
   const card = await Card.findByIdAndDelete(cardId)
   if (!card) throw new NotFoundError('Card not found')
+  // Don't leave the card's images orphaned in storage (best-effort: the card is already gone)
+  for (const attachment of card.attachments ?? []) {
+    deleteImage(attachment.publicId).catch((err: Error) =>
+      console.error(`[uploads] could not delete ${attachment.publicId}: ${err.message}`),
+    )
+  }
   return { cardId, columnId: card.columnId.toString() }
+}
+
+export async function addAttachment(
+  cardId: string,
+  attachment: { url: string; publicId: string; filename: string; uploadedBy: string },
+): Promise<{ card: CardDTO; attachment: AttachmentDTO }> {
+  const card = await Card.findByIdAndUpdate(
+    cardId,
+    { $push: { attachments: { ...attachment, uploadedAt: new Date() } } },
+    { returnDocument: 'after' },
+  )
+  if (!card) throw new NotFoundError('Card not found')
+  const added = card.attachments[card.attachments.length - 1]!
+  return { card: toCardDTO(card), attachment: toAttachmentDTO(added) }
+}
+
+// Removes one attachment and returns its storage id so the caller can delete the file
+export async function removeAttachment(
+  cardId: string,
+  attachmentId: string,
+): Promise<{ card: CardDTO; publicId: string }> {
+  const existing = await Card.findOne({ _id: cardId, 'attachments._id': attachmentId }, { 'attachments.$': 1 })
+  const target = existing?.attachments[0]
+  if (!target) throw new NotFoundError('Attachment not found')
+
+  const card = await Card.findByIdAndUpdate(
+    cardId,
+    { $pull: { attachments: { _id: attachmentId } } },
+    { returnDocument: 'after' },
+  )
+  if (!card) throw new NotFoundError('Card not found')
+  return { card: toCardDTO(card), publicId: target.publicId }
 }

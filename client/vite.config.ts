@@ -17,6 +17,11 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
+      // Card images stored by the server's local storage driver
+      '/uploads': {
+        target: process.env.VITE_API_PROXY_TARGET ?? 'http://localhost:4000',
+        changeOrigin: true,
+      },
     },
   },
 })

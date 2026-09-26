@@ -42,6 +42,23 @@ Asynchronous work runs on a BullMQ queue (`app-jobs`) backed by the same Redis i
 
 **Email delivery is stubbed on purpose.** No email provider is configured, so the welcome-email worker logs the subject and body it *would* send. The queueing and async processing are real; only the final provider call is missing, and it plugs in at one marked spot in `welcomeEmail.job.ts`. The same applies to org invites, which currently show a shareable link instead of sending an email.
 
+## Card images
+
+Cards can have images attached from their detail view. The first image appears as a cover on the board, and changes sync live over the existing `card:updated` event.
+
+- **Validated on the server by content.** The server checks the file's actual bytes, not its name or declared type. Only JPEG, PNG, WebP and GIF up to 5 MB are accepted. Files are stored under random names, never the uploader's filename.
+- **Storage is swappable** via `STORAGE_DRIVER` (`server/src/uploads/storage.ts`):
+  - `local` (default): files go to `server/uploads/`, which is served at `/uploads` and kept in the `uploads_data` Docker volume, so they survive `docker compose down`/`up`.
+  - `cloudinary`: images are stored on Cloudinary's free tier.
+- **Before deploying**, switch to Cloudinary. Free-tier hosts like Render or Railway often have ephemeral disks, so locally stored images can vanish on a redeploy. Create a free Cloudinary account, then set:
+  ```
+  STORAGE_DRIVER=cloudinary
+  CLOUDINARY_CLOUD_NAME=...
+  CLOUDINARY_API_KEY=...
+  CLOUDINARY_API_SECRET=...
+  ```
+  No code changes are needed. Images uploaded while using local storage aren't migrated automatically.
+
 ## Future work
 
 - **Transactional email provider** (Resend, SendGrid, …) for welcome emails and org invites.

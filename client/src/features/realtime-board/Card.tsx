@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useState, type MouseEvent } from 'react'
 import type { CardData } from './boardState'
 
 // Custom drag type so the column only accepts board cards, not arbitrary dragged text
@@ -7,68 +7,35 @@ export const CARD_DRAG_TYPE = 'application/x-board-card'
 interface CardProps {
   card: CardData
   dropBefore: boolean
-  onUpdate: (card: CardData, title: string, description: string | null) => void
+  onOpen: (cardId: string) => void
   onDelete: (cardId: string) => void
 }
 
-export function Card({ card, dropBefore, onUpdate, onDelete }: CardProps) {
-  const [isEditing, setIsEditing] = useState(false)
+function PaperclipIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+      <path
+        d="M21 11.5 12.5 20a5.5 5.5 0 0 1-7.8-7.8l8.6-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.5a1.8 1.8 0 0 1-2.6-2.6l7.9-7.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+export function Card({ card, dropBefore, onOpen, onDelete }: CardProps) {
   const [isDragging, setIsDragging] = useState(false)
-  const [title, setTitle] = useState(card.title)
-  const [description, setDescription] = useState(card.description ?? '')
-
-  function startEditing() {
-    setTitle(card.title)
-    setDescription(card.description ?? '')
-    setIsEditing(true)
-  }
-
-  function save(e: FormEvent) {
-    e.preventDefault()
-    const trimmed = title.trim()
-    if (!trimmed) return
-    onUpdate(card, trimmed, description.trim() || null)
-    setIsEditing(false)
-  }
-
-  if (isEditing) {
-    return (
-      <form onSubmit={save} className="board-card board-card-edit">
-        <input
-          className="input"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          maxLength={200}
-          required
-          autoFocus
-          aria-label="Title"
-        />
-        <textarea
-          className="textarea"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          maxLength={5000}
-          placeholder="Add a description..."
-          aria-label="Description"
-        />
-        <div className="row" style={{ gap: 6 }}>
-          <button type="submit" className="btn btn-ink btn-sm">
-            Save
-          </button>
-          <button type="button" className="btn btn-outline btn-sm" onClick={() => setIsEditing(false)}>
-            Cancel
-          </button>
-        </div>
-      </form>
-    )
-  }
-
+  const cover = card.attachments[0]
   const classes = ['board-card', isDragging && 'dragging', dropBefore && 'drop-before'].filter(Boolean).join(' ')
+
+  // Buttons on the card do their own thing instead of also opening it
+  const stop = (e: MouseEvent) => e.stopPropagation()
 
   return (
     <article
       className={classes}
       draggable
+      onClick={() => onOpen(card.id)}
       onDragStart={(e) => {
         e.dataTransfer.setData(CARD_DRAG_TYPE, card.id)
         e.dataTransfer.effectAllowed = 'move'
@@ -76,15 +43,50 @@ export function Card({ card, dropBefore, onUpdate, onDelete }: CardProps) {
       }}
       onDragEnd={() => setIsDragging(false)}
     >
-      <p className="board-card-title">{card.title}</p>
+      {/* First image as a cover, so attachments are visible without opening the card */}
+      {cover && <img className="board-card-cover" src={cover.url} alt="" loading="lazy" draggable={false} />}
+      <button
+        type="button"
+        className="board-card-title"
+        onClick={(e) => {
+          stop(e)
+          onOpen(card.id)
+        }}
+      >
+        {card.title}
+      </button>
       {card.description && <p className="board-card-desc">{card.description}</p>}
-      <div className="board-card-actions">
-        <button className="icon-btn" onClick={startEditing}>
-          Edit
-        </button>
-        <button className="icon-btn icon-btn-danger" onClick={() => onDelete(card.id)}>
-          Delete
-        </button>
+      <div className="board-card-footer">
+        {card.attachments.length > 0 && (
+          <span
+            className="board-card-badge"
+            title={`${card.attachments.length} image${card.attachments.length === 1 ? '' : 's'}`}
+            aria-label={`${card.attachments.length} image${card.attachments.length === 1 ? '' : 's'}`}
+          >
+            <PaperclipIcon />
+            {card.attachments.length}
+          </span>
+        )}
+        <div className="board-card-actions">
+          <button
+            className="icon-btn"
+            onClick={(e) => {
+              stop(e)
+              onOpen(card.id)
+            }}
+          >
+            Edit
+          </button>
+          <button
+            className="icon-btn icon-btn-danger"
+            onClick={(e) => {
+              stop(e)
+              onDelete(card.id)
+            }}
+          >
+            Delete
+          </button>
+        </div>
       </div>
     </article>
   )

@@ -34,7 +34,8 @@ export function ConfirmDialog({ title, children, confirmLabel, onConfirm, onCanc
       className="modal"
       style={{ width: 'min(28rem, calc(100vw - 32px))' }}
       aria-labelledby="confirm-dialog-title"
-      onClose={onCancel}
+      // React bubbles onClose from nested dialogs; only react to this dialog closing itself
+      onClose={(e) => e.target === e.currentTarget && onCancel()}
       // A click that lands on the <dialog> itself (not its content) is a click on the backdrop
       onClick={(e) => e.target === e.currentTarget && !busy && dialogRef.current?.close()}
     >

@@ -43,11 +43,13 @@ const updateSchema = z
   .refine((d) => d.title !== undefined || d.description !== undefined, 'Nothing to update')
 const deleteSchema = z.object({ cardId: objectId })
 // Pixels relative to an anchor chosen by `area`: 'board' = the board's content track (scrolls
-// with the columns), 'page' = the board page container (header, gaps, margins — can be
-// negative, e.g. in the left margin). null/null hides the cursor (pointer left the window).
+// with the columns), 'column' = one column's card list content (each list scrolls on its own),
+// 'page' = the board page container (header, gaps, margins — can be negative, e.g. in the left
+// margin). null/null hides the cursor (pointer left the window).
 const coordinate = z.number().finite().min(-5_000).max(20_000)
 const cursorSchema = z.union([
   z.object({ orgId: objectId, x: coordinate, y: coordinate, area: z.enum(['board', 'page']) }),
+  z.object({ orgId: objectId, x: coordinate, y: coordinate, area: z.literal('column'), columnId: objectId }),
   z.object({ orgId: objectId, x: z.null(), y: z.null() }),
 ])
 
@@ -178,6 +180,7 @@ export function registerBoardHandlers(
     if (!parsed.success) return
     const { orgId, x, y } = parsed.data
     const area = 'area' in parsed.data ? parsed.data.area : null
+    const columnId = 'columnId' in parsed.data ? parsed.data.columnId : undefined
 
     // Must have joined this org's board (which checked membership + subscription)
     if (socket.data.presenceOrgId !== orgId || !socket.rooms.has(orgRoom(orgId))) return
@@ -200,7 +203,9 @@ export function registerBoardHandlers(
 
     // userId comes from the authenticated socket, never the payload. `volatile`: a client that
     // can't keep up just skips stale positions instead of queueing them.
-    socket.to(orgRoom(orgId)).volatile.emit(CURSOR_UPDATE, { userId, x, y, area })
+    socket
+      .to(orgRoom(orgId))
+      .volatile.emit(CURSOR_UPDATE, { userId, x, y, area, ...(columnId ? { columnId } : {}) })
   })
 
   // Card events: the orgId to check is always derived from the DB record, never from the client.

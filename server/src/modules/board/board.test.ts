@@ -1,3 +1,4 @@
+import fs from 'fs/promises'
 import http from 'http'
 import type { AddressInfo } from 'net'
 import mongoose from 'mongoose'
@@ -555,6 +556,21 @@ describe('live cursors', () => {
     expect(await received).toEqual({ userId: owner.userId, x: -120, y: 35, area: 'page' })
   })
 
+  it('relays positions inside a scrollable column list, with that column', async () => {
+    const { a, b, owner, orgId } = await twoOnBoard()
+    const columnId = new mongoose.Types.ObjectId().toString()
+
+    const received = nextEvent(b, CURSOR_UPDATE)
+    a.emit(CURSOR_MOVE, { orgId, x: 40, y: 910, area: 'column', columnId })
+    expect(await received).toEqual({ userId: owner.userId, x: 40, y: 910, area: 'column', columnId })
+
+    // A column position without its column is meaningless and is dropped
+    const nothing = expectNoEvent(b, CURSOR_UPDATE)
+    await new Promise((r) => setTimeout(r, 20))
+    a.emit(CURSOR_MOVE, { orgId, x: 40, y: 10, area: 'column' })
+    await nothing
+  })
+
   it('relays "left the board" as null coordinates', async () => {
     const { a, b, owner, orgId } = await twoOnBoard()
     const received = nextEvent(b, CURSOR_UPDATE)
@@ -623,5 +639,173 @@ describe('live cursors', () => {
     await received
 
     expect(await counts()).toEqual(before)
+  })
+})
+
+describe('card attachments', () => {
+  const uploadsDir = process.env.UPLOADS_DIR!
+  // Real 1x1 PNG, plus minimal headers for the other accepted formats
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(64)])
+  const WEBP = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBPVP8 '), Buffer.alloc(64)])
+
+  async function filesOnDisk() {
+    return fs.readdir(uploadsDir).catch(() => [] as string[])
+  }
+
+  async function setupCard() {
+    const { owner, member, orgId } = await setupSubscribedOrg()
+    const state = await boardService.getBoardState(orgId)
+    const card = await boardService.createCard(state.board.id, state.columns[0]!.id, 'With pics', owner.userId)
+    return { owner, member, orgId, card, path: `/orgs/${orgId}/board/cards/${card.id}/attachments` }
+  }
+
+  function upload(path: string, token: string, file: Buffer, filename: string, contentType: string) {
+    return request(app).post(path).set(authed(token)).attach('file', file, { filename, contentType })
+  }
+
+  it.each([
+    ['PNG', PNG, 'photo.png', 'image/png'],
+    ['JPEG', JPEG, 'photo.jpg', 'image/jpeg'],
+    ['WebP', WEBP, 'photo.webp', 'image/webp'],
+  ])('stores a %s, attaches it to the card and serves it back', async (_kind, file, filename, contentType) => {
+    const { member, path, card, orgId } = await setupCard()
+
+    const res = await upload(path, member.accessToken, file, filename, contentType)
+    expect(res.status).toBe(201)
+    expect(res.body.attachment).toMatchObject({ filename, uploadedBy: member.userId })
+    expect(res.body.card.attachments).toHaveLength(1)
+
+    // Served from local storage with safe headers
+    const served = await request(app).get(res.body.attachment.url)
+    expect(served.status).toBe(200)
+    expect(served.headers['content-type']).toBe(contentType)
+    expect(served.headers['x-content-type-options']).toBe('nosniff')
+
+    // And it's part of the card everywhere the card is read
+    const board = await request(app).get(`/orgs/${orgId}/board`).set(authed(member.accessToken))
+    expect(board.body.cards.find((c: { id: string }) => c.id === card.id).attachments).toHaveLength(1)
+  })
+
+  it('broadcasts the change as card:updated to everyone on the board', async () => {
+    const { owner, member, orgId, path, card } = await setupCard()
+    const viewer = await connect(owner.accessToken)
+    await joinBoard(viewer, orgId)
+
+    const update = nextEvent(viewer, CARD_UPDATED)
+    await upload(path, member.accessToken, PNG, 'live.png', 'image/png')
+    const { card: updated } = await update
+    expect(updated.id).toBe(card.id)
+    expect(updated.attachments.map((a: { filename: string }) => a.filename)).toEqual(['live.png'])
+  })
+
+  it.each([
+    ['a text file', Buffer.from('just some notes'), 'notes.txt', 'text/plain'],
+    ['a PDF', Buffer.from('%PDF-1.7\n...'), 'doc.pdf', 'application/pdf'],
+    ['text disguised as a PNG', Buffer.from('<script>alert(1)</script>'), 'evil.png', 'image/png'],
+    ['an SVG', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'), 'icon.svg', 'image/svg+xml'],
+  ])('rejects %s by its content, storing nothing', async (_kind, file, filename, contentType) => {
+    const { member, path, card } = await setupCard()
+    const before = await filesOnDisk()
+
+    const res = await upload(path, member.accessToken, file, filename, contentType)
+    expect(res.status).toBe(415)
+    expect(res.body.error).toMatch(/JPEG, PNG, WebP and GIF/)
+    expect(await filesOnDisk()).toEqual(before)
+    expect((await Card.findById(card.id))!.attachments).toHaveLength(0)
+  })
+
+  it('rejects an image over 5 MB, storing nothing', async () => {
+    const { member, path } = await setupCard()
+    const before = await filesOnDisk()
+    const huge = Buffer.concat([PNG, Buffer.alloc(5 * 1024 * 1024)])
+
+    const res = await upload(path, member.accessToken, huge, 'huge.png', 'image/png')
+    expect(res.status).toBe(413)
+    expect(res.body.error).toMatch(/5 MB/)
+    expect(await filesOnDisk()).toEqual(before)
+  })
+
+  it('requires a file', async () => {
+    const { member, path } = await setupCard()
+    const res = await request(app).post(path).set(authed(member.accessToken))
+    expect(res.status).toBe(400)
+  })
+
+  it('deletes one attachment, its file, and nothing else', async () => {
+    const { owner, member, orgId, path } = await setupCard()
+    const first = (await upload(path, member.accessToken, PNG, 'keep.png', 'image/png')).body.attachment
+    const second = (await upload(path, member.accessToken, JPEG, 'remove.jpg', 'image/jpeg')).body.attachment
+    const secondFile = second.url.replace('/uploads/', '')
+    expect(await filesOnDisk()).toContain(secondFile)
+
+    const viewer = await connect(owner.accessToken)
+    await joinBoard(viewer, orgId)
+    const update = nextEvent(viewer, CARD_UPDATED)
+
+    const res = await request(app).delete(`${path}/${second.id}`).set(authed(member.accessToken))
+    expect(res.status).toBe(200)
+    expect(res.body.card.attachments.map((a: { id: string }) => a.id)).toEqual([first.id])
+    expect((await update).card.attachments).toHaveLength(1)
+
+    expect(await filesOnDisk()).not.toContain(secondFile)
+    expect((await request(app).get(first.url)).status).toBe(200)
+    expect((await request(app).get(second.url)).status).toBe(404)
+
+    const again = await request(app).delete(`${path}/${second.id}`).set(authed(member.accessToken))
+    expect(again.status).toBe(404)
+  })
+
+  it('deleting a card also deletes its images from storage', async () => {
+    const { member, path, card } = await setupCard()
+    const { attachment } = (await upload(path, member.accessToken, PNG, 'gone.png', 'image/png')).body
+    const file = attachment.url.replace('/uploads/', '')
+
+    await boardService.deleteCard(card.id)
+    await new Promise((r) => setTimeout(r, 50)) // cleanup is best-effort, fire-and-forget
+    expect(await filesOnDisk()).not.toContain(file)
+  })
+
+  describe('permissions are enforced, not just declared', () => {
+    it('rejects unauthenticated requests', async () => {
+      const { path } = await setupCard()
+      expect((await request(app).post(path).attach('file', PNG, 'x.png')).status).toBe(401)
+    })
+
+    it('rejects non-members (404) without storing anything', async () => {
+      const { path } = await setupCard()
+      const outsider = await registerUser('outsider@example.com')
+      const before = await filesOnDisk()
+      const res = await upload(path, outsider.accessToken, PNG, 'x.png', 'image/png')
+      expect(res.status).toBe(404)
+      expect(await filesOnDisk()).toEqual(before)
+    })
+
+    it('rejects unsubscribed orgs (402)', async () => {
+      const { member, orgId, path } = await setupCard()
+      await Subscription.updateOne({ orgId }, { status: 'canceled' })
+      expect((await upload(path, member.accessToken, PNG, 'x.png', 'image/png')).status).toBe(402)
+    })
+
+    it("rejects reaching another org's card through your own org's route", async () => {
+      const { card, member, path } = await setupCard()
+      const { attachment } = (await upload(path, member.accessToken, PNG, 'x.png', 'image/png')).body
+
+      // An unrelated user with their own subscribed org
+      const attacker = await registerUser('attacker@example.com')
+      const attackerOrg = await request(app).post('/orgs').set(authed(attacker.accessToken)).send({ name: 'Evil' })
+      const attackerOrgId = attackerOrg.body.org.id as string
+      await subscribe(attackerOrgId)
+      const viaOwnOrg = `/orgs/${attackerOrgId}/board/cards/${card.id}/attachments`
+
+      const uploadRes = await upload(viaOwnOrg, attacker.accessToken, PNG, 'x.png', 'image/png')
+      expect(uploadRes.status).toBe(404)
+      const deleteRes = await request(app).delete(`${viaOwnOrg}/${attachment.id}`).set(authed(attacker.accessToken))
+      expect(deleteRes.status).toBe(404)
+      expect((await Card.findById(card.id))!.attachments).toHaveLength(1)
+    })
   })
 })

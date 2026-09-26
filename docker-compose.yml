@@ -21,6 +21,8 @@ services:
     volumes:
       - ./server:/app
       - /app/node_modules
+      # Card images (local storage driver) survive `docker compose down` / `up`
+      - uploads_data:/app/uploads
 
   client:
     build:
@@ -38,3 +40,4 @@ services:
 
 volumes:
   mongo_data:
+  uploads_data:

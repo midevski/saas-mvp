@@ -8,6 +8,7 @@ import { InviteButton } from '../dashboard/InviteButton'
 import { PresenceProvider } from '../../context/PresenceContext'
 import { PresenceAvatars } from './PresenceAvatars'
 import { CursorLayer, LiveCursorsProvider } from './CursorLayer'
+import { CardDetailView } from './CardDetailView'
 import {
   BOARD_JOIN,
   BOARD_LEAVE,
@@ -81,6 +82,8 @@ function LiveBoard({ orgId }: { orgId: string }) {
   const pageRef = useRef<HTMLDivElement>(null)
   const boardRef = useRef<HTMLDivElement>(null)
   const trackRef = useRef<HTMLDivElement>(null)
+  // The card whose detail view is open (looked up live in board state on every render)
+  const [openCardId, setOpenCardId] = useState<string | null>(null)
 
   const join = useCallback(() => {
     socket.timeout(ACK_TIMEOUT_MS).emit(BOARD_JOIN, { orgId }, (err: Error | null, ack: Ack) => {
@@ -149,6 +152,9 @@ function LiveBoard({ orgId }: { orgId: string }) {
 
   if (!state) return <p className="eyebrow">Loading board...</p>
 
+  // If someone else deletes the open card, its detail view simply goes away
+  const openCard = openCardId ? state.cards.find((c) => c.id === openCardId) : undefined
+
   function createCard(columnId: string, title: string) {
     // Not optimistic: waits for the server-assigned id
     send(CARD_CREATE, { boardId: state!.board.id, columnId, title }, (ack) => {
@@ -203,7 +209,7 @@ function LiveBoard({ orgId }: { orgId: string }) {
                 cards={cardsInColumn(state.cards, column.id)}
                 onCreate={createCard}
                 onMove={moveCard}
-                onUpdate={updateCard}
+                onOpen={setOpenCardId}
                 onDelete={deleteCard}
               />
             ))}
@@ -212,6 +218,17 @@ function LiveBoard({ orgId }: { orgId: string }) {
         </div>
         <CursorLayer area="page" />
       </div>
+      {openCard && (
+        <CardDetailView
+          // Remount per card so the form starts from that card's values
+          key={openCard.id}
+          orgId={orgId}
+          card={openCard}
+          onClose={() => setOpenCardId(null)}
+          onSave={updateCard}
+          onCardChanged={(card) => dispatch({ type: 'updated', card })}
+        />
+      )}
     </LiveCursorsProvider>
   )
 }

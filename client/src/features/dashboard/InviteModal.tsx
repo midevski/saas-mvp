@@ -96,7 +96,13 @@ export function InviteModal({ orgId, orgName, onClose, onInvited }: InviteModalP
   }
 
   return (
-    <dialog ref={dialogRef} className="modal" aria-labelledby="invite-modal-title" onClose={onClose}>
+    <dialog
+      ref={dialogRef}
+      className="modal"
+      aria-labelledby="invite-modal-title"
+      // React bubbles onClose from nested dialogs; only react to this dialog closing itself
+      onClose={(e) => e.target === e.currentTarget && onClose()}
+    >
       <div className="card-header">
         <div className="card-title">
           <span className="eyebrow">{orgName}</span>

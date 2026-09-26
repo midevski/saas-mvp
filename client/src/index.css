@@ -816,12 +816,52 @@ code {
   gap: 8px;
   padding: 14px 14px 10px;
 }
+/* Long lists scroll inside the column (about 5 cards tall) instead of stretching the page */
+.board-column-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
 .board-column-body {
+  max-height: min(28rem, 60vh);
+  overflow-y: auto;
+  /* Scrolling past the end of a list doesn't start scrolling the page */
+  overscroll-behavior: contain;
+  /* Room for the hover lift and the drop indicator above the first card */
+  padding: 4px 10px 10px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+.board-column-cards {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  flex: 1;
-  padding: 0 10px 10px;
+}
+/* Soft shadows at an edge when there's more to scroll that way */
+.board-column-scroll::before,
+.board-column-scroll::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 25;
+  height: 16px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.board-column-scroll::before {
+  top: 0;
+  background: linear-gradient(#0f11151f, transparent);
+}
+.board-column-scroll::after {
+  bottom: 0;
+  background: linear-gradient(transparent, #0f11151f);
+}
+.board-column-scroll.more-above::before,
+.board-column-scroll.more-below::after {
+  opacity: 1;
 }
 .board-column-footer {
   padding: 10px;
@@ -840,7 +880,10 @@ code {
     opacity 0.15s ease;
 }
 .board-card[draggable='true'] {
-  cursor: grab;
+  cursor: pointer; /* click opens it; dragging still works */
+}
+.board-card[draggable='true']:active {
+  cursor: grabbing;
 }
 .board-card[draggable='true']:hover {
   border-color: var(--color-line-strong);
@@ -853,11 +896,50 @@ code {
 .board-card.drop-before {
   box-shadow: 0 -3px 0 0 var(--color-accent);
 }
+/* A real button (keyboard-openable), styled as plain text */
 .board-card-title {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
   font-weight: 500;
   font-size: 0.9375rem;
   line-height: 1.4;
+  text-align: left;
   overflow-wrap: anywhere;
+  cursor: pointer;
+}
+/* First attachment as a cover image, edge to edge at the top of the card */
+.board-card-cover {
+  display: block;
+  width: calc(100% + 24px);
+  height: 120px;
+  margin: -12px -12px 10px;
+  border-radius: 5px 5px 0 0;
+  object-fit: cover;
+  background: var(--color-paper-2);
+}
+.board-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+}
+.board-card-footer .board-card-actions {
+  margin-top: 0;
+  margin-left: auto;
+}
+.board-card-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--color-fg-muted);
 }
 .board-card-desc {
   margin-top: 6px;
@@ -1172,4 +1254,206 @@ code {
   padding: 4px 14px 8px;
   font-size: 0.8125rem;
   color: var(--color-fg-muted);
+}
+
+/* ---------- Card detail & attachments ---------- */
+
+.modal-wide {
+  width: min(44rem, calc(100vw - 32px));
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.attachment-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 12px;
+}
+.attachment-thumb {
+  position: relative;
+  min-width: 0;
+}
+.attachment-open {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: var(--color-paper-2);
+  cursor: zoom-in;
+  transition: border-color 0.15s ease;
+}
+.attachment-open:hover {
+  border-color: var(--color-line-strong);
+}
+.attachment-open img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.attachment-delete {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
+  background: #0f1115cc;
+  color: var(--color-white);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.15s ease,
+    background-color 0.15s ease;
+}
+.attachment-thumb:hover .attachment-delete,
+.attachment-thumb:focus-within .attachment-delete {
+  opacity: 1;
+}
+.attachment-delete:hover {
+  background: var(--color-accent);
+}
+/* No hover on touch screens — keep it reachable */
+@media (hover: none) {
+  .attachment-delete {
+    opacity: 1;
+  }
+}
+.attachment-name {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--color-fg-faint);
+}
+
+.dropzone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  border: 1.5px dashed var(--color-line-strong);
+  border-radius: var(--radius-lg);
+  background: #ece8dd66;
+  font-size: 0.9375rem;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
+}
+.dropzone:hover,
+.dropzone.is-over {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+.dropzone:focus-within {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.dropzone.is-busy {
+  cursor: progress;
+  text-align: left;
+}
+.dropzone-hint {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--color-fg-faint);
+}
+.progress {
+  display: block;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-paper-2);
+}
+.progress-bar {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 0.2s ease;
+}
+
+/* Full-screen image preview */
+.lightbox {
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  max-height: none;
+  padding: 24px;
+  border: 0;
+  background: transparent;
+}
+.lightbox[open] {
+  display: grid;
+  place-items: center;
+}
+.lightbox::backdrop {
+  background: #0f1115e0;
+}
+.lightbox figure {
+  margin: 0;
+  text-align: center;
+}
+.lightbox img {
+  display: block;
+  max-width: min(90vw, 1200px);
+  max-height: 80vh;
+  margin: 0 auto;
+  border-radius: 6px;
+  object-fit: contain;
+  box-shadow: 0 30px 70px -30px #000000b3;
+}
+.lightbox figcaption {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 14px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--color-on-ink-muted);
+}
+.lightbox figcaption a {
+  color: var(--color-on-ink);
+}
+.lightbox-close {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--color-line-on-ink);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--color-on-ink);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.lightbox-close:hover {
+  background: var(--color-on-ink);
+  color: var(--color-ink);
 }
