@@ -64,6 +64,39 @@ export async function acceptInviteHandler(req: Request, res: Response) {
   res.json({ orgId })
 }
 
+export async function listInvitesHandler(req: Request, res: Response) {
+  // Only pending invites are listable for now; the query param keeps the URL self-describing
+  const status = req.query.status ?? 'pending'
+  if (status !== 'pending') {
+    res.status(400).json({ error: 'Only status=pending is supported' })
+    return
+  }
+
+  const invites = await orgService.listPendingInvites(paramAsString(req.params.orgId)!)
+  res.json({
+    invites: invites.map((invite) => ({
+      id: invite.id,
+      email: invite.email,
+      role: invite.role,
+      expiresAt: invite.expiresAt,
+      createdAt: invite.createdAt,
+      // Owner/admin only (same gate as creating invites), so the link can be re-copied if lost
+      inviteLink: `${env.CLIENT_URL}/invites/${invite.token}`,
+    })),
+  })
+}
+
+export async function revokeInviteHandler(req: Request, res: Response) {
+  const inviteId = paramAsString(req.params.inviteId)
+  if (!inviteId || !mongoose.isValidObjectId(inviteId)) {
+    res.status(400).json({ error: 'Invalid invite id' })
+    return
+  }
+
+  await orgService.revokeInvite(paramAsString(req.params.orgId)!, inviteId)
+  res.status(204).end()
+}
+
 export async function removeMemberHandler(req: Request, res: Response) {
   const targetUserId = paramAsString(req.params.userId)
   if (!targetUserId || !mongoose.isValidObjectId(targetUserId)) {

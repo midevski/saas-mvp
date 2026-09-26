@@ -6,10 +6,13 @@ import { env } from '../config/env'
 import type { AuthPayload } from '../middleware/requireAuth'
 import { verifyAccessToken } from '../modules/auth/auth.service'
 import { registerBoardHandlers } from './boardSocket'
-import { UNAUTHORIZED } from './events'
+import { orgRoom, PRESENCE_UPDATE, UNAUTHORIZED } from './events'
+import { MemoryPresenceStore, PresenceBroadcaster, RedisPresenceStore, type PresenceStore } from './presence'
 
 export interface SocketData {
   user: AuthPayload
+  // The org whose board this socket currently counts as viewing (for presence)
+  presenceOrgId?: string
 }
 
 // Event payloads are validated at runtime with zod in boardSocket.ts, so the maps stay loose
@@ -18,8 +21,11 @@ type LooseEvents = Record<string, (...args: any[]) => void>
 export type AppServer = Server<LooseEvents, LooseEvents, LooseEvents, SocketData>
 export type AppSocket = Socket<LooseEvents, LooseEvents, LooseEvents, SocketData>
 
-// `redis` is optional so tests can run on the default in-memory adapter
-export function createSocketServer(httpServer: http.Server, redis?: Redis): AppServer {
+// `redis` is optional so tests can run on the in-memory adapter and presence store
+export function createSocketServer(
+  httpServer: http.Server,
+  redis?: Redis,
+): { io: AppServer; closePresence: () => Promise<void> } {
   const io: AppServer = new Server(httpServer, {
     cors: { origin: env.CLIENT_URL, credentials: true },
   })
@@ -28,6 +34,10 @@ export function createSocketServer(httpServer: http.Server, redis?: Redis): AppS
     // Redis-backed rooms/broadcasts, so multiple server instances share one realtime state
     io.adapter(createAdapter(redis, redis.duplicate()))
   }
+  const presence: PresenceStore = redis ? new RedisPresenceStore(redis) : new MemoryPresenceStore()
+  const broadcaster = new PresenceBroadcaster(presence, (orgId, onlineUserIds) =>
+    io.to(orgRoom(orgId)).emit(PRESENCE_UPDATE, { onlineUserIds }),
+  )
 
   // Handshake auth: the access token arrives in the Socket.io auth payload, not a header
   io.use((socket, next) => {
@@ -44,7 +54,12 @@ export function createSocketServer(httpServer: http.Server, redis?: Redis): AppS
     }
   })
 
-  io.on('connection', (socket) => registerBoardHandlers(socket))
+  io.on('connection', (socket) => registerBoardHandlers(socket, presence, broadcaster))
 
-  return io
+  async function closePresence() {
+    broadcaster.close()
+    await presence.close()
+  }
+
+  return { io, closePresence }
 }

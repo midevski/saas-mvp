@@ -16,7 +16,7 @@ async function main() {
   redis.on('error', (err) => console.error('[redis] connection failed:', err))
 
   const server = http.createServer(app)
-  createSocketServer(server, redis)
+  const { closePresence } = createSocketServer(server, redis)
 
   // Background jobs run in this same process (see README "Future work: separate worker")
   startQueue()
@@ -37,6 +37,8 @@ async function main() {
     console.log(`[server] ${signal} received, shutting down`)
     // Give an in-flight job a moment to finish; queued jobs are safe in Redis regardless
     const timeout = setTimeout(() => process.exit(1), 10_000)
+    // Other instances/clients stop counting this instance's sockets as online right away
+    await closePresence().catch(() => {})
     await closeWorker().catch(() => {})
     await closeQueue().catch(() => {})
     clearTimeout(timeout)

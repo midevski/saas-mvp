@@ -108,6 +108,22 @@ export async function inviteMember(
   })
 }
 
+// Outstanding invites only: still pending and not past their expiry
+export async function listPendingInvites(orgId: string) {
+  return Invite.find({ orgId, status: 'pending', expiresAt: { $gt: new Date() } }).sort({ createdAt: -1 })
+}
+
+// Revoking reuses the 'expired' status on purpose: acceptInvite already rejects expired
+// invites, so a revoked link stops working without touching the accept flow.
+export async function revokeInvite(orgId: string, inviteId: string) {
+  const invite = await Invite.findOne({ _id: inviteId, orgId })
+  if (!invite) throw new NotFoundError('Invite not found')
+  if (invite.status !== 'pending') throw new ConflictError('Invite is no longer pending')
+
+  invite.status = 'expired'
+  await invite.save()
+}
+
 export async function acceptInvite(token: string, userId: string, userEmail: string) {
   const invite = await Invite.findOne({ token })
   if (!invite) throw new NotFoundError('Invite not found')

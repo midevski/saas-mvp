@@ -55,11 +55,14 @@ test('signup -> org -> invite -> subscribe -> realtime board across two users', 
 
   let invitePath = ''
   await test.step('owner generates an invite link', async () => {
-    await a.getByPlaceholder('teammate@company.com').fill(teammate.email)
-    await a.getByRole('button', { name: 'Send invite' }).click()
-    const link = await a.locator('code').textContent()
-    invitePath = new URL(link!).pathname
+    await a.getByRole('button', { name: 'Invite', exact: true }).click()
+    const modal = a.getByRole('dialog', { name: 'Invite a teammate' })
+    await modal.getByLabel('Email').fill(teammate.email)
+    await modal.getByRole('button', { name: 'Create invite link' }).click()
+    const link = await a.getByRole('dialog').getByLabel('Invite link').inputValue()
+    invitePath = new URL(link).pathname
     expect(invitePath).toMatch(/^\/invites\/[a-f\d]+$/)
+    await a.getByRole('dialog').getByRole('button', { name: 'Done' }).click()
   })
 
   await test.step('teammate opens the invite in another browser, registers, and joins', async () => {

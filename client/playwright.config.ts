@@ -24,7 +24,9 @@ export default defineConfig({
     baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:5173',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
+    // Video needs Playwright's ffmpeg, which CI installs with Chromium; locally, traces and
+    // screenshots are enough and a local browser channel may not have ffmpeg downloaded
+    video: process.env.CI ? 'retain-on-failure' : 'off',
   },
   projects: [
     {

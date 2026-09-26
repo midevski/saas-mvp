@@ -22,6 +22,20 @@ orgRouter.post(
   orgController.inviteHandler,
 )
 
+orgRouter.get(
+  '/orgs/:orgId/invites',
+  requireAuth,
+  requireRole(['owner', 'admin']),
+  orgController.listInvitesHandler,
+)
+
+orgRouter.delete(
+  '/orgs/:orgId/invites/:inviteId',
+  requireAuth,
+  requireRole(['owner', 'admin']),
+  orgController.revokeInviteHandler,
+)
+
 orgRouter.post('/invites/:token/accept', requireAuth, orgController.acceptInviteHandler)
 
 orgRouter.delete(

@@ -4,8 +4,12 @@ import { api } from '../../lib/api/axiosInstance'
 import { useSocket } from '../../context/SocketContext'
 import { useOrg } from '../../context/OrgContext'
 import { PageHeader } from '../../components/PageHeader'
+import { InviteButton } from '../dashboard/InviteButton'
+import { PresenceProvider } from '../../context/PresenceContext'
+import { PresenceAvatars } from './PresenceAvatars'
 import {
   BOARD_JOIN,
+  BOARD_LEAVE,
   BOARD_STATE,
   CARD_CREATE,
   CARD_CREATED,
@@ -30,12 +34,22 @@ export function BoardPage() {
 
   if (!orgId) return null
   if (subscribed === null) return <p className="eyebrow">Loading...</p>
-  if (subscribed) return <LiveBoard orgId={orgId} />
+  if (subscribed) {
+    return (
+      <PresenceProvider orgId={orgId}>
+        <LiveBoard orgId={orgId} />
+      </PresenceProvider>
+    )
+  }
 
   // Checked before attempting board:join — the server would reject it too, but don't rely on that
   return (
     <>
-      <PageHeader eyebrow="Realtime board" title="Collaborative board" />
+      <PageHeader
+        eyebrow="Realtime board"
+        title="Collaborative board"
+        actions={<InviteButton orgId={orgId} />}
+      />
       <section className="card-ink" style={{ maxWidth: '44rem' }}>
         <div className="blueprint-ink" />
         <div className="glow" style={{ top: '-10rem', right: '-10rem' }} />
@@ -103,6 +117,9 @@ function LiveBoard({ orgId }: { orgId: string }) {
       socket.off(CARD_UPDATED, onUpdated)
       socket.off(CARD_DELETED, onDeleted)
       socket.off('connect', join)
+      // The socket outlives this page — tell the server we stopped viewing the board, so we
+      // leave its room and drop out of its presence list
+      socket.emit(BOARD_LEAVE)
     }
   }, [socket, join])
 
@@ -153,10 +170,14 @@ function LiveBoard({ orgId }: { orgId: string }) {
         title={orgs.find((o) => o.id === orgId)?.name ?? state.board.name}
         lede="Drag cards between columns. Changes appear instantly for everyone on this board."
         actions={
-          <span className={isConnected ? 'pill pill-success' : 'pill'}>
-            <span className={isConnected ? 'dot dot-live' : 'dot dot-off'} />
-            {isConnected ? 'Live' : 'Reconnecting...'}
-          </span>
+          <>
+            <PresenceAvatars />
+            <span className={isConnected ? 'pill pill-success' : 'pill'}>
+              <span className={isConnected ? 'dot dot-live' : 'dot dot-off'} />
+              {isConnected ? 'Live' : 'Reconnecting...'}
+            </span>
+            <InviteButton orgId={orgId} />
+          </>
         }
       />
       {error && (

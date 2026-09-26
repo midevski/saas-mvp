@@ -5,6 +5,7 @@ import * as boardService from '../modules/board/board.service'
 import { findMembership } from '../modules/orgs/org.service'
 import {
   BOARD_JOIN,
+  BOARD_LEAVE,
   BOARD_STATE,
   CARD_CREATE,
   CARD_CREATED,
@@ -16,6 +17,7 @@ import {
   CARD_UPDATED,
   orgRoom,
 } from './events'
+import type { PresenceBroadcaster, PresenceStore } from './presence'
 import type { AppSocket } from './socket'
 
 // Sent back to the emitting client via Socket.io acknowledgements
@@ -73,25 +75,84 @@ function handler<T>(schema: z.ZodType<T>, fn: (payload: T) => Promise<Record<str
   }
 }
 
-export function registerBoardHandlers(socket: AppSocket) {
+export function registerBoardHandlers(
+  socket: AppSocket,
+  presence: PresenceStore,
+  broadcaster: PresenceBroadcaster,
+) {
   const { userId } = socket.data.user
+
+  // Everyone in the room — including the socket that triggered the change — gets the new list
+  const broadcastPresence = (orgId: string) => broadcaster.broadcast(orgId)
+
+  // Presence is best-effort: a Redis hiccup must never break joining or using the board
+  async function safely(action: string, fn: () => Promise<void>) {
+    try {
+      await fn()
+    } catch (err) {
+      console.error(`[presence] ${action} failed: ${(err as Error).message}`)
+    }
+  }
+
+  // Join/leave/disconnect for this socket run strictly in order. Handlers are async, so without
+  // this a join still awaiting the DB could finish *after* a leave or disconnect and re-add
+  // presence for a socket that's already gone.
+  let pending: Promise<unknown> = Promise.resolve()
+  function inOrder<T>(fn: () => Promise<T>): Promise<T> {
+    const run = pending.then(fn, fn)
+    pending = run.catch(() => {})
+    return run
+  }
+
+  async function leavePresence() {
+    const orgId = socket.data.presenceOrgId
+    if (!orgId) return
+    delete socket.data.presenceOrgId
+    await safely('leave', async () => {
+      await presence.remove(orgId, socket.id)
+      await broadcastPresence(orgId)
+    })
+  }
 
   socket.on(
     BOARD_JOIN,
-    handler(joinSchema, async ({ orgId }) => {
+    handler(joinSchema, ({ orgId }) => inOrder(async () => {
       await assertCanAccessOrg(userId, orgId)
 
       // A client views one org's board at a time
       for (const room of socket.rooms) {
         if (room.startsWith('org:') && room !== orgRoom(orgId)) await socket.leave(room)
       }
+      if (socket.data.presenceOrgId !== orgId) await leavePresence()
       await socket.join(orgRoom(orgId))
 
       // Full snapshot to the joining client only, so a mid-session (re)connect isn't stale
       socket.emit(BOARD_STATE, await boardService.getBoardState(orgId))
+
+      socket.data.presenceOrgId = orgId
+      await safely('join', async () => {
+        await presence.add(orgId, socket.id, userId)
+        await broadcastPresence(orgId)
+      })
       return {}
-    }),
+    })),
   )
+
+  // The socket connection lives app-wide, so leaving the board page is an explicit event
+  socket.on(
+    BOARD_LEAVE,
+    handler(z.unknown(), () => inOrder(async () => {
+      for (const room of socket.rooms) {
+        if (room.startsWith('org:')) await socket.leave(room)
+      }
+      await leavePresence()
+      return {}
+    })),
+  )
+
+  // Closed tab, dropped network, logout. Other tabs of the same user keep their own entries,
+  // so the user only goes offline once their last socket for that org is gone.
+  socket.on('disconnect', () => void inOrder(leavePresence))
 
   // Card events: the orgId to check is always derived from the DB record, never from the client.
   // Broadcasts use socket.to(), which excludes the sender — their UI already updated optimistically.

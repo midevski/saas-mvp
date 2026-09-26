@@ -241,3 +241,107 @@ describe('multi-org membership', () => {
     expect(roles).toEqual(['member', 'owner'])
   })
 })
+
+describe('GET /orgs/:orgId/invites (pending invites)', () => {
+  async function setup() {
+    const owner = await registerUser('owner@example.com')
+    const admin = await registerUser('admin@example.com')
+    const member = await registerUser('member@example.com')
+    const orgId = await createOrg(owner.accessToken)
+    await inviteAndAccept(orgId, owner.accessToken, admin, 'admin')
+    await inviteAndAccept(orgId, owner.accessToken, member, 'member')
+    return { owner, admin, member, orgId }
+  }
+
+  function invite(orgId: string, token: string, email: string, role: 'admin' | 'member' = 'member') {
+    return request(app).post(`/orgs/${orgId}/invites`).set(authed(token)).send({ email, role })
+  }
+
+  it('lists only outstanding invites for owners and admins, with a re-copyable link', async () => {
+    const { owner, admin, orgId } = await setup()
+    await invite(orgId, owner.accessToken, 'pending@example.com', 'admin')
+    const lapsed = await invite(orgId, owner.accessToken, 'lapsed@example.com')
+    await Invite.updateOne({ token: lapsed.body.inviteToken }, { expiresAt: new Date(Date.now() - 1000) })
+    // Another org's invite must not leak into this list
+    const otherOrgId = await createOrg(owner.accessToken, 'Other Org')
+    await invite(otherOrgId, owner.accessToken, 'elsewhere@example.com')
+
+    for (const user of [owner, admin]) {
+      const res = await request(app).get(`/orgs/${orgId}/invites?status=pending`).set(authed(user.accessToken))
+      expect(res.status).toBe(200)
+      // Accepted (admin/member), past-expiry and other-org invites are all excluded
+      expect(res.body.invites).toHaveLength(1)
+      expect(res.body.invites[0]).toMatchObject({ email: 'pending@example.com', role: 'admin' })
+      expect(res.body.invites[0].inviteLink).toMatch(/\/invites\/[a-f\d]+$/)
+      expect(res.body.invites[0].id).toEqual(expect.any(String))
+    }
+  })
+
+  it('is hidden from plain members and non-members', async () => {
+    const { member, orgId } = await setup()
+    const outsider = await registerUser('outsider@example.com')
+
+    const asMember = await request(app).get(`/orgs/${orgId}/invites`).set(authed(member.accessToken))
+    expect(asMember.status).toBe(403)
+    const asOutsider = await request(app).get(`/orgs/${orgId}/invites`).set(authed(outsider.accessToken))
+    expect(asOutsider.status).toBe(404)
+  })
+
+  it('rejects unsupported status filters', async () => {
+    const { owner, orgId } = await setup()
+    const res = await request(app).get(`/orgs/${orgId}/invites?status=accepted`).set(authed(owner.accessToken))
+    expect(res.status).toBe(400)
+  })
+})
+
+describe('DELETE /orgs/:orgId/invites/:inviteId (revoke)', () => {
+  async function setupWithPendingInvite() {
+    const owner = await registerUser('owner@example.com')
+    const admin = await registerUser('admin@example.com')
+    const member = await registerUser('member@example.com')
+    const invitee = await registerUser('invitee@example.com')
+    const orgId = await createOrg(owner.accessToken)
+    await inviteAndAccept(orgId, owner.accessToken, admin, 'admin')
+    await inviteAndAccept(orgId, owner.accessToken, member, 'member')
+    const created = await request(app)
+      .post(`/orgs/${orgId}/invites`)
+      .set(authed(owner.accessToken))
+      .send({ email: invitee.email, role: 'member' })
+    const inviteId = (await Invite.findOne({ token: created.body.inviteToken }))!.id as string
+    return { owner, admin, member, invitee, orgId, inviteId, token: created.body.inviteToken as string }
+  }
+
+  it('lets an admin revoke, after which the link can no longer be accepted', async () => {
+    const { admin, invitee, orgId, inviteId, token } = await setupWithPendingInvite()
+
+    const res = await request(app).delete(`/orgs/${orgId}/invites/${inviteId}`).set(authed(admin.accessToken))
+    expect(res.status).toBe(204)
+
+    const list = await request(app).get(`/orgs/${orgId}/invites`).set(authed(admin.accessToken))
+    expect(list.body.invites).toHaveLength(0)
+
+    const accept = await request(app).post(`/invites/${token}/accept`).set(authed(invitee.accessToken))
+    expect(accept.status).toBe(403)
+  })
+
+  it('rejects members, other orgs, bad ids and already-used invites', async () => {
+    const { owner, member, orgId, inviteId } = await setupWithPendingInvite()
+
+    const asMember = await request(app).delete(`/orgs/${orgId}/invites/${inviteId}`).set(authed(member.accessToken))
+    expect(asMember.status).toBe(403)
+
+    // The owner of a different org can't revoke this org's invite through their own org
+    const otherOrgId = await createOrg(owner.accessToken, 'Other Org')
+    const crossOrg = await request(app)
+      .delete(`/orgs/${otherOrgId}/invites/${inviteId}`)
+      .set(authed(owner.accessToken))
+    expect(crossOrg.status).toBe(404)
+
+    const badId = await request(app).delete(`/orgs/${orgId}/invites/not-an-id`).set(authed(owner.accessToken))
+    expect(badId.status).toBe(400)
+
+    await request(app).delete(`/orgs/${orgId}/invites/${inviteId}`).set(authed(owner.accessToken))
+    const again = await request(app).delete(`/orgs/${orgId}/invites/${inviteId}`).set(authed(owner.accessToken))
+    expect(again.status).toBe(409)
+  })
+})

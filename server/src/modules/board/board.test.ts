@@ -17,6 +17,8 @@ import {
   CARD_MOVED,
   CARD_UPDATE,
   CARD_UPDATED,
+  BOARD_LEAVE,
+  PRESENCE_UPDATE,
 } from '../../realtime/events'
 import { Subscription } from '../billing/subscription.model'
 import { Card } from './card.model'
@@ -33,7 +35,7 @@ beforeAll(async () => {
   await mongoose.connect(mongod.getUri())
 
   httpServer = http.createServer(app)
-  io = createSocketServer(httpServer)
+  ;({ io } = createSocketServer(httpServer))
   await new Promise<void>((resolve) => httpServer.listen(0, resolve))
   baseUrl = `http://localhost:${(httpServer.address() as AddressInfo).port}`
 })
@@ -380,5 +382,142 @@ describe('card events', () => {
       await emitAck(outsiderSocket, CARD_UPDATE, { cardId: created.card.id, title: 'Hijacked' }),
     ).toEqual({ ok: false, error: 'not_found' })
     expect((await Card.findById(created.card.id))!.title).toBe('Mine')
+  })
+})
+
+describe('board presence', () => {
+  // Resolves with the first presence:update whose online list matches `expected`
+  function presenceBecomes(socket: ClientSocket, expected: string[]): Promise<void> {
+    const want = [...expected].sort().join(',')
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        socket.off(PRESENCE_UPDATE, listener)
+        reject(new Error(`presence never became [${want}]`))
+      }, 2000)
+      const listener = ({ onlineUserIds }: { onlineUserIds: string[] }) => {
+        if ([...onlineUserIds].sort().join(',') !== want) return
+        clearTimeout(timer)
+        socket.off(PRESENCE_UPDATE, listener)
+        resolve()
+      }
+      socket.on(PRESENCE_UPDATE, listener)
+    })
+  }
+
+  async function join(socket: ClientSocket, orgId: string) {
+    expect(await emitAck(socket, BOARD_JOIN, { orgId })).toEqual({ ok: true })
+  }
+
+  it('broadcasts the online list to everyone in the room, including the joiner', async () => {
+    const { owner, member, orgId } = await setupSubscribedOrg()
+    const a = await connect(owner.accessToken)
+    const b = await connect(member.accessToken)
+
+    const aSeesSelf = presenceBecomes(a, [owner.userId])
+    await join(a, orgId)
+    await aSeesSelf
+
+    const aSeesBoth = presenceBecomes(a, [owner.userId, member.userId])
+    const bSeesBoth = presenceBecomes(b, [owner.userId, member.userId])
+    await join(b, orgId)
+    await Promise.all([aSeesBoth, bSeesBoth])
+  })
+
+  it('keeps a user online until their last tab for that org disconnects', async () => {
+    const { owner, member, orgId } = await setupSubscribedOrg()
+    const tab1 = await connect(owner.accessToken)
+    const tab2 = await connect(owner.accessToken)
+    const watcher = await connect(member.accessToken)
+    await join(tab1, orgId)
+    await join(tab2, orgId)
+    const both = presenceBecomes(watcher, [owner.userId, member.userId])
+    await join(watcher, orgId)
+    await both
+
+    // Closing one tab: the update still lists the owner
+    const stillOnline = presenceBecomes(watcher, [owner.userId, member.userId])
+    tab1.disconnect()
+    await stillOnline
+
+    const ownerGone = presenceBecomes(watcher, [member.userId])
+    tab2.disconnect()
+    await ownerGone
+  })
+
+  it('removes a user who leaves the board but keeps their socket connected', async () => {
+    const { owner, member, orgId } = await setupSubscribedOrg()
+    const a = await connect(owner.accessToken)
+    const b = await connect(member.accessToken)
+    await join(a, orgId)
+    const both = presenceBecomes(b, [owner.userId, member.userId])
+    await join(b, orgId)
+    await both
+
+    const ownerGone = presenceBecomes(b, [member.userId])
+    expect(await emitAck(a, BOARD_LEAVE, {})).toEqual({ ok: true })
+    await ownerGone
+    expect(a.connected).toBe(true)
+    // Having left the room, the owner no longer receives board events
+    const noEvent = expectNoEvent(a, PRESENCE_UPDATE)
+    const bRejoin = presenceBecomes(b, [member.userId])
+    await emitAck(b, BOARD_LEAVE, {})
+    await join(b, orgId)
+    await bRejoin
+    await noEvent
+  })
+
+  it('never lists a rejected non-member', async () => {
+    const { owner, orgId } = await setupSubscribedOrg()
+    const outsider = await registerUser('outsider@example.com')
+    const a = await connect(owner.accessToken)
+    const onlyOwner = presenceBecomes(a, [owner.userId])
+    await join(a, orgId)
+    await onlyOwner
+
+    const o = await connect(outsider.accessToken)
+    const noUpdate = expectNoEvent(a, PRESENCE_UPDATE)
+    expect(await emitAck(o, BOARD_JOIN, { orgId })).toEqual({ ok: false, error: 'not_found' })
+    await noUpdate
+  })
+
+  it("drops a user from an org's presence when they switch to another org's board", async () => {
+    const { owner, member, orgId } = await setupSubscribedOrg()
+    const otherOrgRes = await request(app).post('/orgs').set(authed(owner.accessToken)).send({ name: 'Other' })
+    const otherOrgId = otherOrgRes.body.org.id as string
+    await subscribe(otherOrgId)
+
+    const a = await connect(owner.accessToken)
+    const b = await connect(member.accessToken)
+    await join(a, orgId)
+    const both = presenceBecomes(b, [owner.userId, member.userId])
+    await join(b, orgId)
+    await both
+
+    const ownerGone = presenceBecomes(b, [member.userId])
+    await join(a, otherOrgId)
+    await ownerGone
+  })
+})
+
+describe('board presence ordering', () => {
+  it('a leave sent right after a join is applied after it, not before', async () => {
+    const { owner, member, orgId } = await setupSubscribedOrg()
+    const watcher = await connect(member.accessToken)
+    await emitAck(watcher, BOARD_JOIN, { orgId })
+
+    const a = await connect(owner.accessToken)
+    // Fire both without waiting — the join is still checking membership when the leave arrives
+    const joinAck = emitAck(a, BOARD_JOIN, { orgId })
+    const leaveAck = emitAck(a, BOARD_LEAVE, {})
+    await Promise.all([joinAck, leaveAck])
+
+    // Ask for a fresh broadcast; the owner must not be left behind as a phantom
+    const updates: string[][] = []
+    watcher.on(PRESENCE_UPDATE, ({ onlineUserIds }: { onlineUserIds: string[] }) => updates.push(onlineUserIds))
+    await emitAck(watcher, BOARD_LEAVE, {})
+    const other = await connect(member.accessToken)
+    await emitAck(other, BOARD_JOIN, { orgId })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(updates.at(-1)).toEqual([member.userId])
   })
 })
