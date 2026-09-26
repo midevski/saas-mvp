@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { env } from '../../config/env'
 import type { AuthPayload } from '../../middleware/requireAuth'
+import { enqueueWelcomeEmail } from '../../jobs/queue'
 import { User } from '../users/user.model'
 import { RefreshToken } from './refreshToken.model'
 
@@ -50,6 +51,11 @@ export async function register(email: string, password: string, name: string) {
   const user = await User.create({ email, passwordHash, name })
 
   const tokens = await issueTokenPair(user.id, user.email)
+
+  // Not awaited: email is slow I/O, handled by the background worker. A queue/Redis failure
+  // is logged inside enqueueWelcomeEmail and never fails the registration itself.
+  enqueueWelcomeEmail({ userId: user.id, email: user.email, name: user.name })
+
   return { user, ...tokens }
 }
 
