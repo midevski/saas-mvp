@@ -18,6 +18,8 @@ import {
   CARD_UPDATE,
   CARD_UPDATED,
   BOARD_LEAVE,
+  CURSOR_MOVE,
+  CURSOR_UPDATE,
   PRESENCE_UPDATE,
 } from '../../realtime/events'
 import { Subscription } from '../billing/subscription.model'
@@ -519,5 +521,107 @@ describe('board presence ordering', () => {
     await emitAck(other, BOARD_JOIN, { orgId })
     await new Promise((r) => setTimeout(r, 200))
     expect(updates.at(-1)).toEqual([member.userId])
+  })
+})
+
+describe('live cursors', () => {
+  async function twoOnBoard() {
+    const { owner, member, orgId } = await setupSubscribedOrg()
+    const a = await connect(owner.accessToken)
+    const b = await connect(member.accessToken)
+    await joinBoard(a, orgId)
+    await joinBoard(b, orgId)
+    return { a, b, owner, member, orgId }
+  }
+
+  const pause = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+  it('relays positions to the rest of the room with the server-attached userId', async () => {
+    const { a, b, owner, orgId } = await twoOnBoard()
+
+    const received = nextEvent(b, CURSOR_UPDATE)
+    const senderSilent = expectNoEvent(a, CURSOR_UPDATE)
+    // A forged userId in the payload is ignored
+    a.emit(CURSOR_MOVE, { orgId, x: 412.5, y: 220, area: 'board', userId: 'someone-else' })
+
+    expect(await received).toEqual({ userId: owner.userId, x: 412.5, y: 220, area: 'board' })
+    await senderSilent
+  })
+
+  it('relays page-area positions, including negative ones in the page margins', async () => {
+    const { a, b, owner, orgId } = await twoOnBoard()
+    const received = nextEvent(b, CURSOR_UPDATE)
+    a.emit(CURSOR_MOVE, { orgId, x: -120, y: 35, area: 'page' })
+    expect(await received).toEqual({ userId: owner.userId, x: -120, y: 35, area: 'page' })
+  })
+
+  it('relays "left the board" as null coordinates', async () => {
+    const { a, b, owner, orgId } = await twoOnBoard()
+    const received = nextEvent(b, CURSOR_UPDATE)
+    a.emit(CURSOR_MOVE, { orgId, x: null, y: null })
+    expect(await received).toEqual({ userId: owner.userId, x: null, y: null, area: null })
+  })
+
+  it("ignores cursors from sockets that haven't joined that org's board", async () => {
+    const { b, orgId } = await twoOnBoard()
+    const outsider = await registerUser('outsider@example.com')
+    const o = await connect(outsider.accessToken)
+    const notJoined = await connect((await registerUser('lurker@example.com')).accessToken)
+
+    const nothing = expectNoEvent(b, CURSOR_UPDATE)
+    o.emit(CURSOR_MOVE, { orgId, x: 10, y: 10, area: 'board' }) // not a member at all
+    notJoined.emit(CURSOR_MOVE, { orgId, x: 10, y: 10, area: 'board' }) // never joined the board
+    await nothing
+  })
+
+  it('drops malformed coordinates', async () => {
+    const { a, b, orgId } = await twoOnBoard()
+    const nothing = expectNoEvent(b, CURSOR_UPDATE)
+    for (const bad of [
+      { orgId, x: 10, y: 10 }, // no area
+      { orgId, x: 10, y: 10, area: 'sidebar' }, // unknown area
+      { orgId, x: 10, y: 'up', area: 'board' },
+      { orgId, x: 1e9, y: 10, area: 'board' },
+      { orgId, x: -9_999, y: 10, area: 'page' },
+      { orgId, x: 10, y: null, area: 'board' },
+      { orgId: 'nope', x: 10, y: 10, area: 'board' },
+    ]) {
+      a.emit(CURSOR_MOVE, bad)
+      await pause(20)
+    }
+    await nothing
+  })
+
+  it('drops floods faster than a sane cursor rate', async () => {
+    const { a, b, orgId } = await twoOnBoard()
+    const updates: unknown[] = []
+    b.on(CURSOR_UPDATE, (u) => updates.push(u))
+
+    for (let i = 0; i < 20; i++) a.emit(CURSOR_MOVE, { orgId, x: i, y: i, area: 'board' }) // all in one tick
+    await pause(300)
+
+    expect(updates.length).toBeGreaterThan(0)
+    expect(updates.length).toBeLessThan(5)
+  })
+
+  it('never writes cursor data to MongoDB', async () => {
+    const { a, b, orgId } = await twoOnBoard()
+    const counts = async () => {
+      const collections = await mongoose.connection.db!.listCollections().toArray()
+      const entries = await Promise.all(
+        collections.map(async (c) => [c.name, await mongoose.connection.db!.collection(c.name).countDocuments()]),
+      )
+      return Object.fromEntries(entries)
+    }
+    const before = await counts()
+
+    const received = nextEvent(b, CURSOR_UPDATE)
+    for (let i = 0; i < 5; i++) {
+      a.emit(CURSOR_MOVE, { orgId, x: 100 + i, y: 50, area: 'board' })
+      await pause(40)
+    }
+    await received
+
+    expect(await counts()).toEqual(before)
   })
 })

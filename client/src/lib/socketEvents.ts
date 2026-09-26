@@ -19,3 +19,9 @@ export const PRESENCE_UPDATE = 'presence:update'
 
 // connect_error message when the handshake token is missing/invalid/expired
 export const UNAUTHORIZED = 'unauthorized'
+
+// Live cursors. Pixels relative to the board's content track; null x/y = left the board.
+// Client -> server: { orgId, x, y }
+export const CURSOR_MOVE = 'cursor:move'
+// Server -> others in the room: { userId, x, y }
+export const CURSOR_UPDATE = 'cursor:update'

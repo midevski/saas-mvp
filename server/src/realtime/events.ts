@@ -17,6 +17,13 @@ export const CARD_DELETED = 'card:deleted'
 // { onlineUserIds: string[] } — everyone in the room, whenever board presence changes
 export const PRESENCE_UPDATE = 'presence:update'
 
+// Live cursors — ephemeral, never persisted. Coordinates are pixels relative to the board's
+// content track ('board' area) or the board page container ('page' area); null x/y = hidden.
+// Client -> server: { orgId, x, y, area: 'board' | 'page' }
+export const CURSOR_MOVE = 'cursor:move'
+// Server -> rest of the room: { userId, x, y, area } — userId is attached server-side
+export const CURSOR_UPDATE = 'cursor:update'
+
 // connect_error message when the handshake token is missing/invalid/expired
 export const UNAUTHORIZED = 'unauthorized'
 

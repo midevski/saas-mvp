@@ -15,6 +15,8 @@ import {
   CARD_MOVED,
   CARD_UPDATE,
   CARD_UPDATED,
+  CURSOR_MOVE,
+  CURSOR_UPDATE,
   orgRoom,
 } from './events'
 import type { PresenceBroadcaster, PresenceStore } from './presence'
@@ -40,6 +42,17 @@ const updateSchema = z
   })
   .refine((d) => d.title !== undefined || d.description !== undefined, 'Nothing to update')
 const deleteSchema = z.object({ cardId: objectId })
+// Pixels relative to an anchor chosen by `area`: 'board' = the board's content track (scrolls
+// with the columns), 'page' = the board page container (header, gaps, margins — can be
+// negative, e.g. in the left margin). null/null hides the cursor (pointer left the window).
+const coordinate = z.number().finite().min(-5_000).max(20_000)
+const cursorSchema = z.union([
+  z.object({ orgId: objectId, x: coordinate, y: coordinate, area: z.enum(['board', 'page']) }),
+  z.object({ orgId: objectId, x: z.null(), y: z.null() }),
+])
+
+const CURSOR_MIN_INTERVAL_MS = 15
+const CURSOR_RECHECK_MS = 10_000
 
 // Re-run on every incoming event: the REST API's access control (membership + subscription)
 // must not be bypassable just because a socket was allowed in earlier.
@@ -153,6 +166,42 @@ export function registerBoardHandlers(
   // Closed tab, dropped network, logout. Other tabs of the same user keep their own entries,
   // so the user only goes offline once their last socket for that org is gone.
   socket.on('disconnect', () => void inOrder(leavePresence))
+
+  // Live cursors: a hot path (~25 msgs/sec per user), relayed without touching the database
+  // except for a periodic permission re-check. Nothing is ever persisted.
+  let lastCursorAt = 0
+  let cursorVerifiedAt = 0
+  let cursorVerifiedOrg: string | null = null
+
+  socket.on(CURSOR_MOVE, async (raw: unknown) => {
+    const parsed = cursorSchema.safeParse(raw)
+    if (!parsed.success) return
+    const { orgId, x, y } = parsed.data
+    const area = 'area' in parsed.data ? parsed.data.area : null
+
+    // Must have joined this org's board (which checked membership + subscription)
+    if (socket.data.presenceOrgId !== orgId || !socket.rooms.has(orgRoom(orgId))) return
+
+    // Drop floods: clients throttle to ~25/sec, so anything much faster is misbehaving
+    const now = Date.now()
+    if (now - lastCursorAt < CURSOR_MIN_INTERVAL_MS) return
+    lastCursorAt = now
+
+    // Re-verify against the DB periodically rather than on every message
+    if (cursorVerifiedOrg !== orgId || now - cursorVerifiedAt > CURSOR_RECHECK_MS) {
+      try {
+        await assertCanAccessOrg(userId, orgId)
+        cursorVerifiedOrg = orgId
+        cursorVerifiedAt = now
+      } catch {
+        return
+      }
+    }
+
+    // userId comes from the authenticated socket, never the payload. `volatile`: a client that
+    // can't keep up just skips stale positions instead of queueing them.
+    socket.to(orgRoom(orgId)).volatile.emit(CURSOR_UPDATE, { userId, x, y, area })
+  })
 
   // Card events: the orgId to check is always derived from the DB record, never from the client.
   // Broadcasts use socket.to(), which excludes the sender — their UI already updated optimistically.

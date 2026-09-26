@@ -59,6 +59,13 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* Live cursors can be positioned outside a narrower viewer's window (e.g. another user's wider
+   margins) — clip them instead of letting them add page scrollbars. `clip`, unlike `hidden`,
+   doesn't create a scroll container, so the sticky header keeps working. */
+#root {
+  overflow: clip;
+}
+
 h1,
 h2,
 h3 {
@@ -721,12 +728,70 @@ code {
 
 /* ---------- Kanban board ---------- */
 
+/* .board scrolls; .board-track is the content itself — fixed-width columns, so its layout is
+   the same for every viewer, which makes it the coordinate space for live cursors */
 .board {
+  overflow-x: auto;
+  padding-bottom: 12px;
+}
+.board-track {
+  position: relative;
   display: flex;
   gap: 16px;
   align-items: flex-start;
-  overflow-x: auto;
-  padding-bottom: 12px;
+  width: max-content;
+  min-width: 100%;
+}
+
+/* ---------- Live cursors ---------- */
+
+.cursor-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  overflow: hidden;
+  pointer-events: none;
+}
+/* Board cursors are clipped to the board; page cursors float over the whole page, including
+   the margins and the sticky top bar (z-index 50) */
+.cursor-layer-page {
+  z-index: 60;
+  overflow: visible;
+}
+/* Anchor for 'page' cursor coordinates */
+.board-page {
+  position: relative;
+}
+.remote-cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* Updates arrive every ~40ms; transitioning between them makes motion continuous instead
+     of teleporting. Slightly longer than the send interval so it never stalls between points. */
+  transition:
+    transform 100ms linear,
+    opacity 0.4s ease;
+  will-change: transform;
+}
+.remote-cursor.is-idle {
+  opacity: 0;
+}
+.remote-cursor svg {
+  display: block;
+  filter: drop-shadow(0 1px 1.5px #0f111540);
+}
+.remote-cursor-label {
+  position: absolute;
+  top: 17px;
+  left: 13px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--color-white);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px -2px #0f111566;
 }
 .board-column {
   display: flex;

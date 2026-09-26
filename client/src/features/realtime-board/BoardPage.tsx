@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../../lib/api/axiosInstance'
 import { useSocket } from '../../context/SocketContext'
@@ -7,6 +7,7 @@ import { PageHeader } from '../../components/PageHeader'
 import { InviteButton } from '../dashboard/InviteButton'
 import { PresenceProvider } from '../../context/PresenceContext'
 import { PresenceAvatars } from './PresenceAvatars'
+import { CursorLayer, LiveCursorsProvider } from './CursorLayer'
 import {
   BOARD_JOIN,
   BOARD_LEAVE,
@@ -76,11 +77,18 @@ function LiveBoard({ orgId }: { orgId: string }) {
   const { orgs } = useOrg()
   const [state, dispatch] = useReducer(boardReducer, null)
   const [error, setError] = useState<string | null>(null)
+  // Live cursor anchors: the page container, the board's scroll viewport, the board's content
+  const pageRef = useRef<HTMLDivElement>(null)
+  const boardRef = useRef<HTMLDivElement>(null)
+  const trackRef = useRef<HTMLDivElement>(null)
 
   const join = useCallback(() => {
     socket.timeout(ACK_TIMEOUT_MS).emit(BOARD_JOIN, { orgId }, (err: Error | null, ack: Ack) => {
       if (err) setError('Could not join the board — retrying when the connection recovers')
-      else if (!ack.ok) setError(ack.error === 'subscription_required' ? 'This org is no longer subscribed' : 'Could not load the board')
+      else if (!ack.ok)
+        setError(
+          ack.error === 'subscription_required' ? 'This org is no longer subscribed' : 'Could not load the board',
+        )
       else setError(null)
     })
   }, [socket, orgId])
@@ -164,40 +172,46 @@ function LiveBoard({ orgId }: { orgId: string }) {
   }
 
   return (
-    <>
-      <PageHeader
-        eyebrow="Realtime board"
-        title={orgs.find((o) => o.id === orgId)?.name ?? state.board.name}
-        lede="Drag cards between columns. Changes appear instantly for everyone on this board."
-        actions={
-          <>
-            <PresenceAvatars />
-            <span className={isConnected ? 'pill pill-success' : 'pill'}>
-              <span className={isConnected ? 'dot dot-live' : 'dot dot-off'} />
-              {isConnected ? 'Live' : 'Reconnecting...'}
-            </span>
-            <InviteButton orgId={orgId} />
-          </>
-        }
-      />
-      {error && (
-        <p role="alert" className="alert" style={{ marginBottom: 16 }}>
-          {error}
-        </p>
-      )}
-      <div className="board">
-        {state.columns.map((column) => (
-          <Column
-            key={column.id}
-            column={column}
-            cards={cardsInColumn(state.cards, column.id)}
-            onCreate={createCard}
-            onMove={moveCard}
-            onUpdate={updateCard}
-            onDelete={deleteCard}
-          />
-        ))}
+    <LiveCursorsProvider orgId={orgId} pageRef={pageRef} boardRef={boardRef} trackRef={trackRef}>
+      <div className="board-page" ref={pageRef}>
+        <PageHeader
+          eyebrow="Realtime board"
+          title={orgs.find((o) => o.id === orgId)?.name ?? state.board.name}
+          lede="Drag cards between columns. Changes appear instantly for everyone on this board."
+          actions={
+            <>
+              <PresenceAvatars />
+              <span className={isConnected ? 'pill pill-success' : 'pill'}>
+                <span className={isConnected ? 'dot dot-live' : 'dot dot-off'} />
+                {isConnected ? 'Live' : 'Reconnecting...'}
+              </span>
+              <InviteButton orgId={orgId} />
+            </>
+          }
+        />
+        {error && (
+          <p role="alert" className="alert" style={{ marginBottom: 16 }}>
+            {error}
+          </p>
+        )}
+        <div className="board" ref={boardRef}>
+          <div className="board-track" ref={trackRef}>
+            {state.columns.map((column) => (
+              <Column
+                key={column.id}
+                column={column}
+                cards={cardsInColumn(state.cards, column.id)}
+                onCreate={createCard}
+                onMove={moveCard}
+                onUpdate={updateCard}
+                onDelete={deleteCard}
+              />
+            ))}
+            <CursorLayer area="board" />
+          </div>
+        </div>
+        <CursorLayer area="page" />
       </div>
-    </>
+    </LiveCursorsProvider>
   )
 }
