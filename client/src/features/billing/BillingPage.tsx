@@ -32,30 +32,29 @@ export function BillingPage() {
   const org = orgs.find((o) => o.id === orgId)
   const role = org?.role ?? currentRole
 
-  async function fetchStatus() {
-    if (!orgId) return
-    const res = await api.get(`/orgs/${orgId}/billing/status`)
-    setStatus(res.data)
-  }
-
   useEffect(() => {
-    fetchStatus().catch(() => setError('Could not load billing status'))
+    if (!orgId) return
+    api
+      .get(`/orgs/${orgId}/billing/status`)
+      .then((res) => setStatus(res.data))
+      .catch(() => setError('Could not load billing status'))
     api
       .get('/billing/config')
       .then((res) => setProPriceId(res.data.proPriceId))
       .catch(() => setError('Could not load billing configuration'))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId])
 
   // Webhook delivery can lag slightly behind the Checkout redirect — refetch once
   useEffect(() => {
-    if (checkoutOutcome !== 'success' || hasPolledOnce.current) return
+    if (!orgId || checkoutOutcome !== 'success' || hasPolledOnce.current) return
     hasPolledOnce.current = true
     const timer = setTimeout(() => {
-      fetchStatus().catch(() => {})
+      api
+        .get(`/orgs/${orgId}/billing/status`)
+        .then((res) => setStatus(res.data))
+        .catch(() => {})
     }, 2000)
     return () => clearTimeout(timer)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkoutOutcome, orgId])
 
   if (!orgId) return null

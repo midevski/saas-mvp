@@ -14,6 +14,7 @@ jest.mock('../../config/stripe', () => ({
 }))
 
 import { app } from '../../app'
+import { env } from '../../config/env'
 import { stripe } from '../../config/stripe'
 import { Subscription } from './subscription.model'
 import * as billingService from './billing.service'
@@ -144,6 +145,51 @@ describe('POST /billing/webhook', () => {
     const stored = await Subscription.findOne({ orgId })
     expect(stored?.status).toBe('canceled')
   })
+
+  it('syncs status, period end and price on customer.subscription.updated', async () => {
+    const owner = await registerUser('subupdated@example.com')
+    const orgId = await createOrg(owner.accessToken)
+    await Subscription.create({ orgId, stripeCustomerId: 'cus_789', status: 'active', priceId: 'price_old' })
+    const periodEnd = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60
+
+    ;(stripe.webhooks.constructEvent as jest.Mock).mockReturnValue({
+      type: 'customer.subscription.updated',
+      data: {
+        object: {
+          id: 'sub_789',
+          customer: 'cus_789',
+          status: 'past_due',
+          items: { data: [{ price: { id: 'price_new' }, current_period_end: periodEnd }] },
+        },
+      },
+    })
+
+    const res = await postWebhook(JSON.stringify({}), 'valid-sig')
+    expect(res.status).toBe(200)
+
+    const stored = await Subscription.findOne({ orgId })
+    expect(stored?.status).toBe('past_due')
+    expect(stored?.priceId).toBe('price_new')
+    expect(stored?.stripeSubscriptionId).toBe('sub_789')
+    expect(stored?.currentPeriodEnd?.getTime()).toBe(periodEnd * 1000)
+    // Access decisions follow the synced status
+    expect(await billingService.isOrgSubscribed(orgId)).toBe(false)
+  })
+
+  it('acknowledges but ignores unhandled event types', async () => {
+    const owner = await registerUser('unhandled@example.com')
+    const orgId = await createOrg(owner.accessToken)
+    await Subscription.create({ orgId, stripeCustomerId: 'cus_ignored', status: 'active' })
+
+    ;(stripe.webhooks.constructEvent as jest.Mock).mockReturnValue({
+      type: 'invoice.paid',
+      data: { object: { customer: 'cus_ignored' } },
+    })
+
+    const res = await postWebhook(JSON.stringify({}), 'valid-sig')
+    expect(res.status).toBe(200)
+    expect((await Subscription.findOne({ orgId }))?.status).toBe('active')
+  })
 })
 
 describe('isOrgSubscribed', () => {
@@ -153,17 +199,36 @@ describe('isOrgSubscribed', () => {
     expect(await billingService.isOrgSubscribed(orgId)).toBe(false)
   })
 
+  // Every Stripe subscription status — only active/trialing grant access
   it.each([
     ['active', true],
     ['trialing', true],
     ['past_due', false],
     ['canceled', false],
+    ['incomplete', false],
+    ['incomplete_expired', false],
+    ['unpaid', false],
+    ['paused', false],
   ] as const)('status %s -> subscribed %s', async (status, expected) => {
     const owner = await registerUser(`status-${status}@example.com`)
     const orgId = await createOrg(owner.accessToken)
     await Subscription.create({ orgId, stripeCustomerId: 'cus_x', status })
 
     expect(await billingService.isOrgSubscribed(orgId)).toBe(expected)
+  })
+
+  it('treats every org as subscribed only when the dev-only BILLING_GATE_DISABLED flag is set', async () => {
+    const owner = await registerUser('gateflag@example.com')
+    const orgId = await createOrg(owner.accessToken)
+    expect(env.BILLING_GATE_DISABLED).toBe(false) // off by default
+
+    const restore = jest.replaceProperty(env, 'BILLING_GATE_DISABLED', true)
+    try {
+      expect(await billingService.isOrgSubscribed(orgId)).toBe(true)
+    } finally {
+      restore.restore()
+    }
+    expect(await billingService.isOrgSubscribed(orgId)).toBe(false)
   })
 })
 
