@@ -1,7 +1,6 @@
 import express, { Router } from 'express'
 import { requireAuth } from '../../middleware/requireAuth'
 import { requireRole } from '../../middleware/requireRole'
-import { requireSubscription } from '../../middleware/requireSubscription'
 import * as billingController from './billing.controller'
 
 export const billingRouter = Router()
@@ -27,15 +26,6 @@ billingRouter.get(
   requireAuth,
   requireRole(['owner', 'admin', 'member']),
   billingController.statusHandler,
-)
-
-// Proves requireSubscription works; Phase 4 mounts it on the real gated feature route
-billingRouter.get(
-  '/orgs/:orgId/premium-placeholder',
-  requireAuth,
-  requireRole(['owner', 'admin', 'member']),
-  requireSubscription,
-  billingController.premiumPlaceholderHandler,
 )
 
 // Stripe calls this directly and authenticates via signature verification, not requireAuth.

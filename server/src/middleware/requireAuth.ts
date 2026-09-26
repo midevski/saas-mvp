@@ -1,6 +1,5 @@
 import type { NextFunction, Request, Response } from 'express'
-import jwt from 'jsonwebtoken'
-import { env } from '../config/env'
+import { verifyAccessToken } from '../modules/auth/auth.service'
 
 export interface AuthPayload {
   userId: string
@@ -25,8 +24,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const token = header.slice('Bearer '.length)
 
   try {
-    const payload = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] }) as AuthPayload
-    req.user = { userId: payload.userId, email: payload.email }
+    req.user = verifyAccessToken(token)
     next()
   } catch {
     res.status(401).json({ error: 'Invalid or expired access token' })

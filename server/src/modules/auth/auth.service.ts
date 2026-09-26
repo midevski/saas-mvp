@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { env } from '../../config/env'
+import type { AuthPayload } from '../../middleware/requireAuth'
 import { User } from '../users/user.model'
 import { RefreshToken } from './refreshToken.model'
 
@@ -20,6 +21,12 @@ function signAccessToken(userId: string, email: string) {
     algorithm: 'HS256',
     expiresIn: ACCESS_TOKEN_TTL,
   })
+}
+
+// Shared by the requireAuth middleware and the Socket.io handshake — throws if missing/invalid/expired
+export function verifyAccessToken(token: string): AuthPayload {
+  const payload = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] }) as AuthPayload
+  return { userId: payload.userId, email: payload.email }
 }
 
 async function issueTokenPair(userId: string, email: string) {

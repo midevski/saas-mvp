@@ -46,10 +46,6 @@ export async function statusHandler(req: Request, res: Response) {
   })
 }
 
-export function premiumPlaceholderHandler(_req: Request, res: Response) {
-  res.json({ message: 'This is a placeholder for a subscription-gated feature.' })
-}
-
 export async function webhookHandler(req: Request, res: Response) {
   const signature = req.headers['stripe-signature']
   if (typeof signature !== 'string') {

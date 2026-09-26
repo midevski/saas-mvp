@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import mongoose from 'mongoose'
 import { ConflictError, ForbiddenError, NotFoundError } from '../../lib/errors'
 import { User } from '../users/user.model'
 import { Org } from './org.model'
@@ -9,6 +10,12 @@ const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 function isDuplicateKeyError(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 11000
+}
+
+// Shared by requireRole and the realtime layer. Malformed ids are treated like "no membership".
+export async function findMembership(orgId: string, userId: string) {
+  if (!mongoose.isValidObjectId(orgId) || !mongoose.isValidObjectId(userId)) return null
+  return Membership.findOne({ orgId, userId })
 }
 
 function slugify(name: string) {

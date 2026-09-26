@@ -3,6 +3,7 @@ import Redis from 'ioredis'
 import { app } from './app'
 import { connectMongo } from './config/db'
 import { env } from './config/env'
+import { createSocketServer } from './realtime/socket'
 
 async function main() {
   await connectMongo()
@@ -12,6 +13,7 @@ async function main() {
   redis.on('error', (err) => console.error('[redis] connection failed:', err))
 
   const server = http.createServer(app)
+  createSocketServer(server, redis)
   server.listen(env.PORT, () => {
     console.log(`[server] listening on http://localhost:${env.PORT}`)
   })

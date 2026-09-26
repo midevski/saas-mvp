@@ -237,14 +237,14 @@ describe('requireSubscription', () => {
     const orgId = await createOrg(owner.accessToken)
 
     const blockedRes = await request(app)
-      .get(`/orgs/${orgId}/premium-placeholder`)
+      .get(`/orgs/${orgId}/board`)
       .set(authed(owner.accessToken))
     expect(blockedRes.status).toBe(402)
 
     await Subscription.create({ orgId, stripeCustomerId: 'cus_gate', status: 'active' })
 
     const allowedRes = await request(app)
-      .get(`/orgs/${orgId}/premium-placeholder`)
+      .get(`/orgs/${orgId}/board`)
       .set(authed(owner.accessToken))
     expect(allowedRes.status).toBe(200)
   })

@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express'
 import { paramAsString } from '../lib/params'
-import { Membership, type MembershipRole } from '../modules/orgs/membership.model'
+import type { MembershipRole } from '../modules/orgs/membership.model'
+import { findMembership } from '../modules/orgs/org.service'
 
 declare global {
   namespace Express {
@@ -19,15 +20,8 @@ export function requireRole(allowedRoles: MembershipRole[]) {
       return
     }
 
-    let membership
-    try {
-      membership = await Membership.findOne({ orgId, userId: req.user.userId })
-    } catch {
-      // Malformed orgId (e.g. bad ObjectId) — treat like "no such org"
-      res.status(404).json({ error: 'Not found' })
-      return
-    }
-
+    // Malformed orgId (e.g. bad ObjectId) comes back null — treated like "no such org"
+    const membership = await findMembership(orgId, req.user.userId)
     if (!membership) {
       // Don't leak org existence to non-members: 404, not 403
       res.status(404).json({ error: 'Not found' })

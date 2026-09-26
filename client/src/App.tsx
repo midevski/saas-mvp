@@ -5,6 +5,7 @@ import { ProtectedRoute } from './features/auth/ProtectedRoute'
 import { DashboardPage } from './features/dashboard/DashboardPage'
 import { AcceptInvitePage } from './features/dashboard/AcceptInvitePage'
 import { BillingPage } from './features/billing/BillingPage'
+import { BoardPage } from './features/realtime-board/BoardPage'
 
 function App() {
   return (
@@ -15,6 +16,7 @@ function App() {
       <Route element={<ProtectedRoute />}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/orgs/:orgId/billing" element={<BillingPage />} />
+        <Route path="/orgs/:orgId/board" element={<BoardPage />} />
       </Route>
     </Routes>
   )

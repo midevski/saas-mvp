@@ -12,6 +12,11 @@ export function setAccessToken(token: string | null) {
   accessToken = token
 }
 
+// Read at call time (e.g. on every socket (re)connect) so callers always get the latest token
+export function getAccessToken() {
+  return accessToken
+}
+
 export function setOnAuthFailure(handler: (() => void) | null) {
   onAuthFailure = handler
 }
@@ -41,6 +46,14 @@ async function refreshAccessToken(): Promise<string | null> {
   }
 }
 
+// Concurrent callers (401'd requests, the socket) share one in-flight refresh
+export function refreshAccessTokenOnce(): Promise<string | null> {
+  refreshPromise ??= refreshAccessToken().finally(() => {
+    refreshPromise = null
+  })
+  return refreshPromise
+}
+
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -53,10 +66,7 @@ api.interceptors.response.use(
     if (!shouldRetry) return Promise.reject(error)
 
     originalRequest._retry = true
-    refreshPromise ??= refreshAccessToken().finally(() => {
-      refreshPromise = null
-    })
-    const newToken = await refreshPromise
+    const newToken = await refreshAccessTokenOnce()
 
     if (!newToken) {
       onAuthFailure?.()

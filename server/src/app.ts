@@ -6,6 +6,7 @@ import { ConflictError, ForbiddenError, NotFoundError } from './lib/errors'
 import { authRouter } from './modules/auth/auth.routes'
 import { orgRouter } from './modules/orgs/org.routes'
 import { billingRouter, billingWebhookRouter } from './modules/billing/billing.routes'
+import { boardRouter } from './modules/board/board.routes'
 
 export const app = express()
 
@@ -24,6 +25,7 @@ app.get('/health', (_req, res) => {
 app.use('/auth', authRouter)
 app.use(orgRouter)
 app.use(billingRouter)
+app.use(boardRouter)
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof NotFoundError) {

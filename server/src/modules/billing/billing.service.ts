@@ -133,6 +133,7 @@ export async function getSubscriptionForOrg(orgId: string) {
 }
 
 export async function isOrgSubscribed(orgId: string): Promise<boolean> {
+  if (env.BILLING_GATE_DISABLED) return true
   const subscription = await Subscription.findOne({ orgId })
   if (!subscription) return false
   return ACTIVE_STATUSES.includes(subscription.status)
