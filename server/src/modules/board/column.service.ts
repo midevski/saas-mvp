@@ -2,7 +2,8 @@ import { NotFoundError, ValidationError } from '../../lib/errors'
 import { deleteImage } from '../../uploads/storage'
 import { Board } from './board.model'
 import { toCardDTO, toColumnDTO, writeOrder, type CardDTO } from './board.service'
-import { Card } from './card.model'
+import { systemEntry } from './activity.service'
+import { Card, type ActivityEntryDocument } from './card.model'
 import { Column } from './column.model'
 
 export type ColumnDTO = ReturnType<typeof toColumnDTO>
@@ -40,8 +41,13 @@ export interface DeletedColumn {
 }
 
 // Deletes a column. Its cards are either moved to the end of another column on the same board
-// (keeping their order), or deleted with it — including their images in storage.
-export async function deleteColumn(columnId: string, moveCardsTo?: string): Promise<DeletedColumn> {
+// (keeping their order), or deleted with it — including their images in storage. Moved cards
+// each get a "moved" entry in their feed, returned for the caller to publish.
+export async function deleteColumn(
+  columnId: string,
+  userId: string,
+  moveCardsTo?: string,
+): Promise<{ deleted: DeletedColumn; activity: { cardId: string; entry: ActivityEntryDocument }[] }> {
   const column = await Column.findById(columnId)
   if (!column) throw new NotFoundError('Column not found')
 
@@ -54,10 +60,15 @@ export async function deleteColumn(columnId: string, moveCardsTo?: string): Prom
 
   const cards = await Card.find({ columnId: column._id }).sort({ order: 1, _id: 1 })
   const result: DeletedColumn = { columnId }
+  const activity: { cardId: string; entry: ActivityEntryDocument }[] = []
 
   if (target) {
     const alreadyThere = await Card.find({ columnId: target._id }).sort({ order: 1, _id: 1 }).select('_id')
-    await Card.updateMany({ columnId: column._id }, { $set: { columnId: target._id } })
+    // One entry, logged on every moved card in the same write that moves them (entry ids only
+    // need to be unique within a card's own feed)
+    const entry = systemEntry(userId, `moved this card from ${column.name} to ${target.name} (${column.name} was deleted)`)
+    await Card.updateMany({ columnId: column._id }, { $set: { columnId: target._id }, $push: { activity: entry } })
+    for (const card of cards) activity.push({ cardId: card._id.toString(), entry })
     await writeOrder(Card, [...alreadyThere.map((c) => c._id), ...cards.map((c) => c._id)])
     const moved = await Card.find({ _id: { $in: cards.map((c) => c._id) } }).sort({ order: 1, _id: 1 })
     result.movedCards = moved.map(toCardDTO)
@@ -82,5 +93,5 @@ export async function deleteColumn(columnId: string, moveCardsTo?: string): Prom
     Column,
     remaining.map((c) => c._id),
   )
-  return result
+  return { deleted: result, activity }
 }

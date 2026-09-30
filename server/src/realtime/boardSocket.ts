@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { NotFoundError, ValidationError } from '../lib/errors'
 import { isOrgSubscribed } from '../modules/billing/billing.service'
+import { publishActivity } from '../modules/board/activity.service'
 import * as boardService from '../modules/board/board.service'
 import * as columnService from '../modules/board/column.service'
 import { findMembership } from '../modules/orgs/org.service'
@@ -258,9 +259,10 @@ export function registerBoardHandlers(
     COLUMN_DELETE,
     handler(columnDeleteSchema, async ({ columnId, moveCardsTo }) => {
       const orgId = await assertCanAccessOrg(userId, await columnService.getOrgIdForColumn(columnId))
-      const result = await columnService.deleteColumn(columnId, moveCardsTo)
-      socket.to(orgRoom(orgId)).emit(COLUMN_DELETED, result)
-      return { ...result }
+      const { deleted, activity } = await columnService.deleteColumn(columnId, userId, moveCardsTo)
+      socket.to(orgRoom(orgId)).emit(COLUMN_DELETED, deleted)
+      for (const { cardId, entry } of activity) await publishActivity(orgId, cardId, entry)
+      return { ...deleted }
     }),
   )
 
@@ -281,8 +283,9 @@ export function registerBoardHandlers(
     CARD_MOVE,
     handler(moveSchema, async ({ cardId, toColumnId, toOrder }) => {
       const orgId = await assertCanAccessOrg(userId, await boardService.getOrgIdForCard(cardId))
-      const result = await boardService.moveCard(cardId, toColumnId, toOrder)
+      const result = await boardService.moveCard(cardId, toColumnId, toOrder, userId)
       socket.to(orgRoom(orgId)).emit(CARD_MOVED, { cardId, toColumnId, toOrder: result.toOrder })
+      await publishActivity(orgId, cardId, result.activity)
       return { toOrder: result.toOrder }
     }),
   )
@@ -291,8 +294,9 @@ export function registerBoardHandlers(
     CARD_UPDATE,
     handler(updateSchema, async ({ cardId, title, description }) => {
       const orgId = await assertCanAccessOrg(userId, await boardService.getOrgIdForCard(cardId))
-      const card = await boardService.updateCard(cardId, { title, description })
+      const { card, activity } = await boardService.updateCard(cardId, { title, description }, userId)
       socket.to(orgRoom(orgId)).emit(CARD_UPDATED, { card })
+      await publishActivity(orgId, cardId, activity)
       return { card }
     }),
   )

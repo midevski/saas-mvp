@@ -28,11 +28,13 @@ import {
   COLUMN_DELETED,
   COLUMN_UPDATE,
   COLUMN_UPDATED,
+  CARD_ACTIVITY,
 } from '../../realtime/events'
 import { Subscription } from '../billing/subscription.model'
 import { Card } from './card.model'
 import { Column } from './column.model'
 import * as boardService from './board.service'
+import * as activityService from './activity.service'
 
 let mongod: MongoMemoryServer
 let httpServer: http.Server
@@ -199,7 +201,7 @@ describe('board.service card ordering', () => {
     const [todo, doing] = state.columns
     const make = (title: string, columnId: string) =>
       boardService.createCard(state.board.id, columnId, title, owner.userId)
-    return { state, todo: todo!, doing: doing!, make }
+    return { state, todo: todo!, doing: doing!, make, userId: owner.userId }
   }
 
   async function titlesIn(columnId: string) {
@@ -224,12 +226,12 @@ describe('board.service card ordering', () => {
   })
 
   it('reorders within a column', async () => {
-    const { todo, make } = await seedBoard()
+    const { todo, make, userId } = await seedBoard()
     await make('A', todo.id)
     await make('B', todo.id)
     const c = await make('C', todo.id)
 
-    await boardService.moveCard(c.id, todo.id, 0)
+    await boardService.moveCard(c.id, todo.id, 0, userId)
     expect(await titlesIn(todo.id)).toEqual(['C', 'A', 'B'])
 
     const cards = await Card.find({ columnId: todo.id }).sort({ order: 1 })
@@ -237,12 +239,12 @@ describe('board.service card ordering', () => {
   })
 
   it('moves across columns and re-sequences both', async () => {
-    const { todo, doing, make } = await seedBoard()
+    const { todo, doing, make, userId } = await seedBoard()
     const a = await make('A', todo.id)
     await make('B', todo.id)
     await make('X', doing.id)
 
-    const result = await boardService.moveCard(a.id, doing.id, 1)
+    const result = await boardService.moveCard(a.id, doing.id, 1, userId)
     expect(result.card.columnId).toBe(doing.id)
     expect(await titlesIn(todo.id)).toEqual(['B'])
     expect(await titlesIn(doing.id)).toEqual(['X', 'A'])
@@ -252,11 +254,11 @@ describe('board.service card ordering', () => {
   })
 
   it('clamps an out-of-range target position to the end', async () => {
-    const { todo, doing, make } = await seedBoard()
+    const { todo, doing, make, userId } = await seedBoard()
     const a = await make('A', todo.id)
     await make('X', doing.id)
 
-    const result = await boardService.moveCard(a.id, doing.id, 99)
+    const result = await boardService.moveCard(a.id, doing.id, 99, userId)
     expect(result.toOrder).toBe(1)
     expect(await titlesIn(doing.id)).toEqual(['X', 'A'])
   })
@@ -1257,6 +1259,288 @@ describe('card checklists', () => {
       expect((await patch(`${via}/items/${itemIds[0]}`, attacker.accessToken, { completed: true })).status).toBe(404)
       expect((await del(via, attacker.accessToken)).status).toBe(404)
       expect((await Card.findById(card.id))!.checklists[0]!.items[0]!.completed).toBe(false)
+    })
+  })
+})
+
+describe('card activity feed', () => {
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64',
+  )
+
+  async function registerNamed(name: string, email: string) {
+    const res = await request(app).post('/auth/register').send({ email, password: 'password123', name })
+    return { accessToken: res.body.accessToken as string, userId: res.body.user.id as string, email, name }
+  }
+
+  // An org with real display names, so @mentions have something to match
+  async function setupCard() {
+    const owner = await registerNamed('Olga Owner', 'olga@example.com')
+    const member = await registerNamed('Sarah Connor', 'sarah@example.com')
+    const orgId = await createOrg(owner.accessToken)
+    await addMember(orgId, owner.accessToken, member)
+    await subscribe(orgId)
+    const state = await boardService.getBoardState(orgId)
+    const [todo, doing, done] = state.columns
+    const card = await boardService.createCard(state.board.id, todo!.id, 'Launch', owner.userId)
+    const cardPath = `/orgs/${orgId}/board/cards/${card.id}`
+    return { owner, member, orgId, card, boardId: state.board.id, todo: todo!, doing: doing!, done: done!, cardPath }
+  }
+
+  const comment = (cardPath: string, token: string, text: unknown) =>
+    request(app).post(`${cardPath}/comments`).set(authed(token)).send({ text })
+
+  async function feed(cardId: string) {
+    return (await activityService.listActivity(cardId)).map((e) => ({
+      type: e.type,
+      author: e.author?.name ?? null,
+      text: e.text,
+    }))
+  }
+
+  describe('comments', () => {
+    it('appends a comment after the "created" entry, authored by the token user, and serves the feed oldest-first', async () => {
+      const { owner, member, card, cardPath } = await setupCard()
+
+      const res = await request(app)
+        .post(`${cardPath}/comments`)
+        .set(authed(member.accessToken))
+        // Anything but the text is ignored — the author comes from the auth token
+        .send({ text: '  Looks good to me  ', authorId: owner.userId, type: 'system' })
+      expect(res.status).toBe(201)
+      expect(res.body.entry).toMatchObject({
+        type: 'comment',
+        author: { id: member.userId, name: 'Sarah Connor' },
+        text: 'Looks good to me',
+        mentions: [],
+      })
+
+      const listed = await request(app).get(`${cardPath}/activity`).set(authed(owner.accessToken))
+      expect(listed.status).toBe(200)
+      expect(listed.body.entries.map((e: { text: string }) => e.text)).toEqual(['created this card', 'Looks good to me'])
+      expect(await feed(card.id)).toEqual([
+        { type: 'system', author: 'Olga Owner', text: 'created this card' },
+        { type: 'comment', author: 'Sarah Connor', text: 'Looks good to me' },
+      ])
+    })
+
+    it('parses @mentions against real org members only — no typos, no outsiders, no emails, no partial names', async () => {
+      const { owner, member, orgId, cardPath } = await setupCard()
+      const sam = await registerNamed('Sam', 'sam@example.com')
+      const samLee = await registerNamed('Sam Lee', 'samlee@example.com')
+      await addMember(orgId, owner.accessToken, sam)
+      await addMember(orgId, owner.accessToken, samLee)
+      await registerNamed('Olivia Outsider', 'olivia@example.com') // not in the org
+
+      const res = await comment(
+        cardPath,
+        owner.accessToken,
+        'Hey @sarah connor and @Sam Lee! cc @Sam, @Olivia Outsider, @Sarahh, @Samuel, mail me@Sam.com',
+      )
+      expect(res.status).toBe(201)
+      expect(res.body.entry.mentions).toEqual([
+        { id: member.userId, name: 'Sarah Connor' }, // case-insensitive
+        { id: samLee.userId, name: 'Sam Lee' }, // the longest matching name wins
+        { id: sam.userId, name: 'Sam' },
+      ])
+    })
+
+    it('stores each mentioned user once, even if mentioned repeatedly', async () => {
+      const { owner, member, card, cardPath } = await setupCard()
+      await comment(cardPath, owner.accessToken, '@Sarah Connor, @Sarah Connor — ping @SARAH CONNOR')
+      const stored = await Card.findById(card.id).select('+activity')
+      const last = stored!.activity[stored!.activity.length - 1]!
+      expect(last.mentions.map(String)).toEqual([member.userId])
+    })
+
+    it('validates the text', async () => {
+      const { owner, cardPath } = await setupCard()
+      for (const text of [undefined, '', '   ', 42, 'x'.repeat(2001)]) {
+        expect((await comment(cardPath, owner.accessToken, text)).status).toBe(400)
+      }
+      expect((await comment(cardPath, owner.accessToken, 'x'.repeat(2000))).status).toBe(201)
+    })
+
+    it('is append-only: there is no way to edit or delete a comment', async () => {
+      const { owner, cardPath } = await setupCard()
+      const { entry } = (await comment(cardPath, owner.accessToken, 'Permanent')).body
+      const as = authed(owner.accessToken)
+      expect((await request(app).patch(`${cardPath}/comments/${entry.id}`).set(as).send({ text: 'x' })).status).toBe(404)
+      expect((await request(app).delete(`${cardPath}/comments/${entry.id}`).set(as)).status).toBe(404)
+      expect((await request(app).put(`${cardPath}/comments`).set(as).send({ text: 'x' })).status).toBe(404)
+    })
+
+    it('never ships the feed with the board or card broadcasts', async () => {
+      const { owner, orgId, card, cardPath } = await setupCard()
+      await comment(cardPath, owner.accessToken, 'Only in the feed')
+      const board = await request(app).get(`/orgs/${orgId}/board`).set(authed(owner.accessToken))
+      const listed = board.body.cards.find((c: { id: string }) => c.id === card.id)
+      expect(listed).toBeDefined()
+      expect(listed).not.toHaveProperty('activity')
+    })
+  })
+
+  describe('system entries, attributed to whoever made the change', () => {
+    it('moving to another column logs "moved this card from X to Y"; reordering within a column logs nothing', async () => {
+      const { member, orgId, card, boardId, todo, doing } = await setupCard()
+      await boardService.createCard(boardId, todo.id, 'Another', member.userId)
+      const socket = await connect(member.accessToken)
+      await joinBoard(socket, orgId)
+
+      expect(await emitAck(socket, CARD_MOVE, { cardId: card.id, toColumnId: todo.id, toOrder: 1 })).toMatchObject({ ok: true })
+      expect(await emitAck(socket, CARD_MOVE, { cardId: card.id, toColumnId: doing.id, toOrder: 0 })).toMatchObject({ ok: true })
+
+      expect(await feed(card.id)).toEqual([
+        { type: 'system', author: 'Olga Owner', text: 'created this card' },
+        { type: 'system', author: 'Sarah Connor', text: 'moved this card from To Do to In Progress' },
+      ])
+    })
+
+    it('editing logs "updated the title/description" (not the diff), and a no-op save logs nothing', async () => {
+      const { member, orgId, card } = await setupCard()
+      const socket = await connect(member.accessToken)
+      await joinBoard(socket, orgId)
+      const update = (changes: object) => emitAck(socket, CARD_UPDATE, { cardId: card.id, ...changes })
+
+      await update({ title: 'Launch v2' })
+      await update({ description: 'A long description that should not be copied into the feed' })
+      await update({ title: 'Launch v3', description: null })
+      await update({ title: 'Launch v3', description: null }) // unchanged
+
+      expect((await feed(card.id)).slice(1)).toEqual([
+        { type: 'system', author: 'Sarah Connor', text: 'updated the title' },
+        { type: 'system', author: 'Sarah Connor', text: 'updated the description' },
+        { type: 'system', author: 'Sarah Connor', text: 'updated the title and description' },
+      ])
+    })
+
+    it('checking/unchecking a checklist item logs it with the item text; re-checking a checked item logs nothing', async () => {
+      const { owner, member, card, cardPath } = await setupCard()
+      const checklist = await request(app).post(`${cardPath}/checklists`).set(authed(owner.accessToken)).send({})
+      const itemsPath = `${cardPath}/checklists/${checklist.body.card.checklists[0].id}/items`
+      const added = await request(app).post(itemsPath).set(authed(owner.accessToken)).send({ text: 'Write tests' })
+      const itemPath = `${itemsPath}/${added.body.card.checklists[0].items[0].id}`
+      const toggle = (token: string, completed: boolean) =>
+        request(app).patch(itemPath).set(authed(token)).send({ completed })
+
+      expect((await toggle(member.accessToken, true)).status).toBe(200)
+      expect((await toggle(owner.accessToken, true)).status).toBe(200) // already checked
+      expect((await toggle(owner.accessToken, false)).status).toBe(200)
+      // Renaming alone isn't a toggle
+      await request(app).patch(itemPath).set(authed(owner.accessToken)).send({ text: 'Write more tests' })
+
+      expect((await feed(card.id)).slice(1)).toEqual([
+        { type: 'system', author: 'Sarah Connor', text: "checked off 'Write tests'" },
+        { type: 'system', author: 'Olga Owner', text: "unchecked 'Write tests'" },
+      ])
+    })
+
+    it('adding and removing an image each log an entry', async () => {
+      const { owner, member, card, cardPath } = await setupCard()
+      const uploaded = await request(app)
+        .post(`${cardPath}/attachments`)
+        .set(authed(member.accessToken))
+        .attach('file', PNG, { filename: 'pic.png', contentType: 'image/png' })
+      expect(uploaded.status).toBe(201)
+      const removed = await request(app)
+        .delete(`${cardPath}/attachments/${uploaded.body.attachment.id}`)
+        .set(authed(owner.accessToken))
+      expect(removed.status).toBe(200)
+
+      expect((await feed(card.id)).slice(1)).toEqual([
+        { type: 'system', author: 'Sarah Connor', text: 'added an image' },
+        { type: 'system', author: 'Olga Owner', text: 'removed an image' },
+      ])
+    })
+
+    it('deleting a column and moving its cards logs the move on each card', async () => {
+      const { member, orgId, card, boardId, todo, done } = await setupCard()
+      const second = await boardService.createCard(boardId, todo.id, 'Second', member.userId)
+      const socket = await connect(member.accessToken)
+      await joinBoard(socket, orgId)
+      expect(await emitAck(socket, COLUMN_DELETE, { columnId: todo.id, moveCardsTo: done.id })).toMatchObject({ ok: true })
+      const moved = { type: 'system', author: 'Sarah Connor', text: 'moved this card from To Do to Done (To Do was deleted)' }
+      expect((await feed(card.id)).slice(1)).toEqual([moved])
+      expect((await feed(second.id)).slice(1)).toEqual([moved])
+    })
+
+    it('still names people who have since left the org', async () => {
+      const { owner, member, orgId, card, cardPath } = await setupCard()
+      await comment(cardPath, member.accessToken, 'Bye!')
+      await request(app).delete(`/orgs/${orgId}/members/${member.userId}`).set(authed(owner.accessToken))
+      expect((await feed(card.id))[1]).toEqual({ type: 'comment', author: 'Sarah Connor', text: 'Bye!' })
+    })
+  })
+
+  describe('live updates', () => {
+    it('sends each new entry as card:activity to everyone on the board — author included — and not to other orgs', async () => {
+      const { owner, member, orgId, card, cardPath, doing } = await setupCard()
+      const other = await setupSubscribedOrgFor('other@example.com')
+      const poster = await connect(member.accessToken)
+      const viewer = await connect(owner.accessToken)
+      const stranger = await connect(other.owner.accessToken)
+      await joinBoard(poster, orgId)
+      await joinBoard(viewer, orgId)
+      await joinBoard(stranger, other.orgId)
+
+      const viewerGets = nextEvent(viewer, CARD_ACTIVITY)
+      const posterGets = nextEvent(poster, CARD_ACTIVITY)
+      const strangerDoesNot = expectNoEvent(stranger, CARD_ACTIVITY)
+      const res = await request(app)
+        .post(`${cardPath}/comments`)
+        .set(authed(member.accessToken))
+        .set('X-Socket-Id', poster.id!)
+        .send({ text: 'Ping @Olga Owner' })
+
+      const expected = { cardId: card.id, entry: res.body.entry }
+      expect(await viewerGets).toEqual(expected)
+      expect(await posterGets).toEqual(expected) // their other tabs need it too; clients de-dupe by id
+      expect(res.body.entry.mentions).toEqual([{ id: owner.userId, name: 'Olga Owner' }])
+      await strangerDoesNot
+
+      // System entries travel the same way, alongside (not instead of) the change's own event
+      const moved = nextEvent(viewer, CARD_MOVED)
+      const logged = nextEvent(viewer, CARD_ACTIVITY)
+      await emitAck(poster, CARD_MOVE, { cardId: card.id, toColumnId: doing.id, toOrder: 0 })
+      expect(await moved).toMatchObject({ cardId: card.id, toColumnId: doing.id })
+      expect((await logged).entry).toMatchObject({
+        type: 'system',
+        author: { id: member.userId, name: 'Sarah Connor' },
+        text: 'moved this card from To Do to In Progress',
+      })
+    })
+  })
+
+  describe('permissions match every other card mutation', () => {
+    it('rejects unauthenticated requests', async () => {
+      const { cardPath } = await setupCard()
+      expect((await request(app).post(`${cardPath}/comments`).send({ text: 'hi' })).status).toBe(401)
+      expect((await request(app).get(`${cardPath}/activity`)).status).toBe(401)
+    })
+
+    it('rejects non-members with 404', async () => {
+      const { card, cardPath } = await setupCard()
+      const outsider = await registerUser('outsider@example.com')
+      expect((await comment(cardPath, outsider.accessToken, 'hi')).status).toBe(404)
+      expect((await request(app).get(`${cardPath}/activity`).set(authed(outsider.accessToken))).status).toBe(404)
+      expect(await feed(card.id)).toHaveLength(1)
+    })
+
+    it('rejects unsubscribed orgs with 402', async () => {
+      const { owner, orgId, cardPath } = await setupCard()
+      await Subscription.updateOne({ orgId }, { status: 'canceled' })
+      expect((await comment(cardPath, owner.accessToken, 'hi')).status).toBe(402)
+      expect((await request(app).get(`${cardPath}/activity`).set(authed(owner.accessToken))).status).toBe(402)
+    })
+
+    it("rejects reaching another org's card through your own org's route", async () => {
+      const { card } = await setupCard()
+      const attacker = await setupSubscribedOrgFor('attacker@example.com')
+      const via = `/orgs/${attacker.orgId}/board/cards/${card.id}`
+      expect((await comment(via, attacker.owner.accessToken, 'hi')).status).toBe(404)
+      expect((await request(app).get(`${via}/activity`).set(authed(attacker.owner.accessToken))).status).toBe(404)
+      expect(await feed(card.id)).toHaveLength(1)
     })
   })
 })

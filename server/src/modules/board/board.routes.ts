@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { requireAuth } from '../../middleware/requireAuth'
 import { requireRole } from '../../middleware/requireRole'
 import { requireSubscription } from '../../middleware/requireSubscription'
+import * as activityController from './activity.controller'
 import * as boardController from './board.controller'
 import * as checklistController from './checklist.controller'
 import * as columnController from './column.controller'
@@ -42,3 +43,9 @@ boardRouter.delete(`${checklists}/:checklistId`, ...boardAccess, checklistContro
 boardRouter.post(`${checklists}/:checklistId/items`, ...boardAccess, checklistController.addItemHandler)
 boardRouter.patch(`${checklists}/:checklistId/items/:itemId`, ...boardAccess, checklistController.updateItemHandler)
 boardRouter.delete(`${checklists}/:checklistId/items/:itemId`, ...boardAccess, checklistController.deleteItemHandler)
+
+// Activity feed: comments are a card mutation like any other, so the same gate. Append-only —
+// there's deliberately no edit or delete route for comments yet.
+const activity = '/orgs/:orgId/board/cards/:cardId'
+boardRouter.get(`${activity}/activity`, ...boardAccess, activityController.listActivityHandler)
+boardRouter.post(`${activity}/comments`, ...boardAccess, activityController.addCommentHandler)

@@ -7,6 +7,7 @@ import { CARD_UPDATED } from '../../realtime/events'
 import { emitToOrg, requesterSocketId } from '../../realtime/emitter'
 import { MAX_IMAGE_BYTES } from '../../uploads/imageType'
 import { deleteImage, uploadImage } from '../../uploads/storage'
+import { publishActivity } from './activity.service'
 import * as boardService from './board.service'
 
 // Initial page load before the socket connects; live updates come over Socket.io
@@ -72,7 +73,8 @@ export async function uploadAttachmentHandler(req: Request, res: Response) {
 
   // An attachment change is a card update: everyone on the board gets it live
   emitToOrg(orgId, CARD_UPDATED, { card: result.card }, requesterSocketId(req.get('x-socket-id')))
-  res.status(201).json(result)
+  await publishActivity(orgId, cardId, result.activity)
+  res.status(201).json({ card: result.card, attachment: result.attachment })
 }
 
 export async function deleteAttachmentHandler(req: Request, res: Response) {
@@ -80,8 +82,9 @@ export async function deleteAttachmentHandler(req: Request, res: Response) {
   const attachmentId = paramAsString(req.params.attachmentId)
   if (!attachmentId || !mongoose.isValidObjectId(attachmentId)) throw new NotFoundError('Attachment not found')
 
-  const { card, publicId } = await boardService.removeAttachment(cardId, attachmentId)
+  const { card, publicId, activity } = await boardService.removeAttachment(cardId, attachmentId, req.user!.userId)
   emitToOrg(orgId, CARD_UPDATED, { card }, requesterSocketId(req.get('x-socket-id')))
+  await publishActivity(orgId, cardId, activity)
 
   // The attachment is already gone from the card; a storage hiccup just leaves an orphan file
   await deleteImage(publicId).catch((err: Error) =>

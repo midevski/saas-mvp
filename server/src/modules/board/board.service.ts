@@ -2,7 +2,14 @@ import type { Types } from 'mongoose'
 import { NotFoundError } from '../../lib/errors'
 import { Board, type BoardDocument } from './board.model'
 import { deleteImage } from '../../uploads/storage'
-import { Card, type AttachmentDocument, type CardDocument, type ChecklistDocument } from './card.model'
+import { systemEntry } from './activity.service'
+import {
+  Card,
+  type ActivityEntryDocument,
+  type AttachmentDocument,
+  type CardDocument,
+  type ChecklistDocument,
+} from './card.model'
 import { Column, type ColumnDocument } from './column.model'
 
 const DEFAULT_COLUMNS = ['To Do', 'In Progress', 'Done']
@@ -154,7 +161,14 @@ export async function createCard(
 
   // Append to the bottom of the column
   const order = await Card.countDocuments({ columnId })
-  const card = await Card.create({ boardId, columnId, title, order, createdBy: userId })
+  const card = await Card.create({
+    boardId,
+    columnId,
+    title,
+    order,
+    createdBy: userId,
+    activity: [systemEntry(userId, 'created this card')],
+  })
   return toCardDTO(card)
 }
 
@@ -182,11 +196,13 @@ export function spliceAt(ids: Types.ObjectId[], id: Types.ObjectId, toOrder: num
 // rewritten to 0..n-1. It costs one bulkWrite per move, which is fine at kanban scale,
 // and it's trivially deterministic — clients apply the exact same splice locally.
 // Deletes may leave gaps; harmless, since only relative order matters and moves re-sequence.
+// Moving to another column logs a system entry (reordering within a column doesn't — it's noise)
 export async function moveCard(
   cardId: string,
   toColumnId: string,
   toOrder: number,
-): Promise<{ card: CardDTO; toOrder: number; fromColumnId: string }> {
+  userId: string,
+): Promise<{ card: CardDTO; toOrder: number; fromColumnId: string; activity: ActivityEntryDocument | null }> {
   const card = await Card.findById(cardId)
   if (!card) throw new NotFoundError('Card not found')
 
@@ -204,7 +220,16 @@ export async function moveCard(
     toOrder,
   )
 
-  await Card.updateOne({ _id: card._id }, { $set: { columnId: toColumn._id } })
+  let activity: ActivityEntryDocument | null = null
+  if (!fromColumnId.equals(toColumn._id)) {
+    const fromColumn = await Column.findById(fromColumnId).select('name')
+    activity = systemEntry(userId, `moved this card from ${fromColumn?.name ?? 'a deleted column'} to ${toColumn.name}`)
+  }
+
+  await Card.updateOne(
+    { _id: card._id },
+    { $set: { columnId: toColumn._id }, ...(activity ? { $push: { activity } } : {}) },
+  )
   await writeOrder(Card, targetIds)
 
   if (!fromColumnId.equals(toColumn._id)) {
@@ -216,20 +241,38 @@ export async function moveCard(
   }
 
   const updated = (await Card.findById(card._id))!
-  return { card: toCardDTO(updated), toOrder: index, fromColumnId: fromColumnId.toString() }
+  return { card: toCardDTO(updated), toOrder: index, fromColumnId: fromColumnId.toString(), activity }
 }
 
+// Logs that the title/description changed, not the diff — feed entries stay short. Saving
+// without actually changing anything logs nothing.
 export async function updateCard(
   cardId: string,
   changes: { title?: string | undefined; description?: string | null | undefined },
-): Promise<CardDTO> {
-  const set: Record<string, unknown> = {}
-  if (changes.title !== undefined) set.title = changes.title
-  if (changes.description !== undefined) set.description = changes.description
+  userId: string,
+): Promise<{ card: CardDTO; activity: ActivityEntryDocument | null }> {
+  const current = await Card.findById(cardId).select('title description')
+  if (!current) throw new NotFoundError('Card not found')
 
-  const card = await Card.findByIdAndUpdate(cardId, { $set: set }, { returnDocument: 'after' })
+  const set: Record<string, unknown> = {}
+  const changed: string[] = []
+  if (changes.title !== undefined) {
+    set.title = changes.title
+    if (changes.title !== current.title) changed.push('title')
+  }
+  if (changes.description !== undefined) {
+    set.description = changes.description
+    if (changes.description !== current.description) changed.push('description')
+  }
+  const activity = changed.length > 0 ? systemEntry(userId, `updated the ${changed.join(' and ')}`) : null
+
+  const card = await Card.findByIdAndUpdate(
+    cardId,
+    { $set: set, ...(activity ? { $push: { activity } } : {}) },
+    { returnDocument: 'after' },
+  )
   if (!card) throw new NotFoundError('Card not found')
-  return toCardDTO(card)
+  return { card: toCardDTO(card), activity }
 }
 
 export async function deleteCard(cardId: string): Promise<{ cardId: string; columnId: string }> {
@@ -263,31 +306,35 @@ export async function deleteBoardForOrg(orgId: string): Promise<void> {
 export async function addAttachment(
   cardId: string,
   attachment: { url: string; publicId: string; filename: string; uploadedBy: string },
-): Promise<{ card: CardDTO; attachment: AttachmentDTO }> {
+): Promise<{ card: CardDTO; attachment: AttachmentDTO; activity: ActivityEntryDocument }> {
+  const activity = systemEntry(attachment.uploadedBy, 'added an image')
   const card = await Card.findByIdAndUpdate(
     cardId,
-    { $push: { attachments: { ...attachment, uploadedAt: new Date() } } },
+    { $push: { attachments: { ...attachment, uploadedAt: new Date() }, activity } },
     { returnDocument: 'after' },
   )
   if (!card) throw new NotFoundError('Card not found')
   const added = card.attachments[card.attachments.length - 1]!
-  return { card: toCardDTO(card), attachment: toAttachmentDTO(added) }
+  return { card: toCardDTO(card), attachment: toAttachmentDTO(added), activity }
 }
 
 // Removes one attachment and returns its storage id so the caller can delete the file
 export async function removeAttachment(
   cardId: string,
   attachmentId: string,
-): Promise<{ card: CardDTO; publicId: string }> {
+  userId: string,
+): Promise<{ card: CardDTO; publicId: string; activity: ActivityEntryDocument }> {
   const existing = await Card.findOne({ _id: cardId, 'attachments._id': attachmentId }, { 'attachments.$': 1 })
   const target = existing?.attachments[0]
   if (!target) throw new NotFoundError('Attachment not found')
 
-  const card = await Card.findByIdAndUpdate(
-    cardId,
-    { $pull: { attachments: { _id: attachmentId } } },
+  const activity = systemEntry(userId, 'removed an image')
+  // Filtered on the attachment too, so two people removing the same image log it once
+  const card = await Card.findOneAndUpdate(
+    { _id: cardId, 'attachments._id': attachmentId },
+    { $pull: { attachments: { _id: attachmentId } }, $push: { activity } },
     { returnDocument: 'after' },
   )
-  if (!card) throw new NotFoundError('Card not found')
-  return { card: toCardDTO(card), publicId: target.publicId }
+  if (!card) throw new NotFoundError('Attachment not found')
+  return { card: toCardDTO(card), publicId: target.publicId, activity }
 }

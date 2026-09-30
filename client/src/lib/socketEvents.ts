@@ -14,6 +14,9 @@ export const CARD_CREATED = 'card:created'
 export const CARD_MOVED = 'card:moved'
 export const CARD_UPDATED = 'card:updated'
 export const CARD_DELETED = 'card:deleted'
+// { cardId, entry: ActivityEntry } — a new comment or system entry for a card's feed. Everyone on
+// the board gets it, the author included, so feeds de-duplicate by entry id.
+export const CARD_ACTIVITY = 'card:activity'
 // { onlineUserIds: string[] } — who has this org's board open right now
 export const PRESENCE_UPDATE = 'presence:update'
 

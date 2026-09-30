@@ -1933,3 +1933,81 @@ code {
 .password-toggle[aria-pressed='true'] {
   color: var(--color-accent-600);
 }
+
+/* ---------- Card activity feed ---------- */
+
+.activity-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.activity-composer .textarea {
+  min-height: 3.5rem;
+  resize: vertical;
+}
+.activity-hint {
+  font-size: 0.7rem;
+}
+.activity-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* Comments: what people said — an avatar and a bubble */
+.activity-comment {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.activity-comment-body {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-paper);
+}
+.activity-meta {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 0.8rem;
+}
+.activity-text {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+}
+.mention {
+  padding: 0 2px;
+  margin: 0 -2px; /* highlight without shifting the surrounding text */
+  border-radius: 3px;
+  background: var(--color-accent-soft);
+  color: var(--color-accent-600);
+  font-weight: 600;
+}
+/* System entries: what people did — a quiet log line, no avatar or bubble. Indented to the
+   comment text so the two kinds read as one timeline. */
+.activity-system {
+  padding-left: 38px; /* avatar (28px) + gap */
+  font-size: 0.78rem;
+  color: var(--color-fg-muted);
+  overflow-wrap: anywhere;
+}
+.activity-system strong {
+  font-weight: 600;
+  color: var(--color-fg);
+}
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}

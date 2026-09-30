@@ -1,7 +1,8 @@
 import { Types } from 'mongoose'
 import { ConflictError, NotFoundError } from '../../lib/errors'
+import { quote, systemEntry } from './activity.service'
 import { toCardDTO, type CardDTO } from './board.service'
-import { Card } from './card.model'
+import { Card, type ActivityEntryDocument } from './card.model'
 
 // Every mutation is one atomic update with positional operators / arrayFilters, so two people
 // changing different items of the same card at the same moment can't overwrite each other
@@ -75,16 +76,33 @@ export async function addItem(cardId: string, checklistId: string, text: string)
   return done(card, cardId, checklistId)
 }
 
+async function currentItem(cardId: string, checklistId: string, itemId: string) {
+  const card = await Card.findOne({ _id: cardId, 'checklists._id': checklistId }, { 'checklists.$': 1 })
+  const item = card?.checklists[0]?.items.find((i) => i._id.equals(itemId))
+  return item ?? explainMiss(cardId, checklistId, itemId)
+}
+
 // Covers renaming and toggling. completedBy/completedAt come from the authenticated user and
 // are only written when `completed` actually flips — re-checking a checked item keeps the
-// original who/when; unchecking clears both.
+// original who/when; unchecking clears both. A flip also logs "checked off '…'" / "unchecked
+// '…'" in the card's feed, in the same update; a no-op toggle logs nothing.
 export async function updateItem(
   cardId: string,
   checklistId: string,
   itemId: string,
   changes: { text?: string | undefined; completed?: boolean | undefined },
   userId: string,
-): Promise<CardDTO> {
+  retried = false,
+): Promise<{ card: CardDTO; activity: ActivityEntryDocument | null }> {
+  let activity: ActivityEntryDocument | null = null
+  if (changes.completed !== undefined) {
+    const item = await currentItem(cardId, checklistId, itemId)
+    if (item.completed !== changes.completed) {
+      const text = quote(changes.text ?? item.text)
+      activity = systemEntry(userId, changes.completed ? `checked off ${text}` : `unchecked ${text}`)
+    }
+  }
+
   // MongoDB rejects unused array filters, so each part adds only the identifiers it uses
   const set: Record<string, unknown> = {}
   const arrayFilters: Record<string, unknown>[] = []
@@ -102,12 +120,20 @@ export async function updateItem(
     arrayFilters.push({ 'flip._id': id(checklistId) }, { 'flipItem._id': id(itemId), 'flipItem.completed': !flipTo })
   }
 
+  // When logging a flip, only match while the item is still in the old state, so the entry is
+  // written exactly when the flip is
+  const itemMatch = activity ? { _id: id(itemId), completed: !changes.completed } : { _id: id(itemId) }
   const card = await Card.findOneAndUpdate(
-    { _id: cardId, checklists: { $elemMatch: { _id: id(checklistId), 'items._id': id(itemId) } } },
-    { $set: set },
+    { _id: cardId, checklists: { $elemMatch: { _id: id(checklistId), items: { $elemMatch: itemMatch } } } },
+    { $set: set, ...(activity ? { $push: { activity } } : {}) },
     { arrayFilters, returnDocument: 'after' },
   )
-  return done(card, cardId, checklistId, itemId)
+  if (!card && activity) {
+    // Someone else flipped it in between: redo it against the item's new state (once)
+    if (!retried) return updateItem(cardId, checklistId, itemId, changes, userId, true)
+    throw new ConflictError('This item is being changed by someone else right now. Please try again.')
+  }
+  return { card: await done(card, cardId, checklistId, itemId), activity }
 }
 
 export async function deleteItem(cardId: string, checklistId: string, itemId: string): Promise<CardDTO> {

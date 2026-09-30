@@ -5,6 +5,7 @@ import { ACCEPTED_IMAGE_TYPES, validateImageFile } from '../../lib/imageUpload'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import type { AttachmentData, CardData } from './boardState'
 import { ChecklistSection } from './ChecklistSection'
+import { ActivityFeed } from './ActivityFeed'
 
 interface CardDetailViewProps {
   orgId: string
@@ -308,6 +309,8 @@ export function CardDetailView({ orgId, card, onClose, onSave, onCardChanged, on
         </section>
 
         <ChecklistSection orgId={orgId} card={card} onCardChanged={onCardChanged} onResync={onResync} />
+
+        <ActivityFeed orgId={orgId} cardId={card.id} />
       </div>
 
       {preview && <Lightbox attachment={preview} onClose={() => setPreview(null)} />}

@@ -5,6 +5,7 @@ import { NotFoundError, ValidationError } from '../../lib/errors'
 import { paramAsString } from '../../lib/params'
 import { CARD_UPDATED } from '../../realtime/events'
 import { emitToOrg, requesterSocketId } from '../../realtime/emitter'
+import { publishActivity } from './activity.service'
 import type { CardDTO } from './board.service'
 import { cardInOrg } from './board.controller'
 import * as checklistService from './checklist.service'
@@ -71,7 +72,8 @@ export async function updateItemHandler(req: Request, res: Response) {
   const itemId = objectIdParam(req, 'itemId', 'Checklist item')
   const changes = parse(updateItemSchema, req.body)
   // The user who toggled comes from the auth token — never from the request body
-  const card = await checklistService.updateItem(cardId, checklistId, itemId, changes, req.user!.userId)
+  const { card, activity } = await checklistService.updateItem(cardId, checklistId, itemId, changes, req.user!.userId)
+  await publishActivity(orgId, cardId, activity)
   broadcast(req, res, orgId, card)
 }
 

@@ -14,6 +14,10 @@ export const CARD_CREATED = 'card:created'
 export const CARD_MOVED = 'card:moved'
 export const CARD_UPDATED = 'card:updated'
 export const CARD_DELETED = 'card:deleted'
+// { cardId, entry } — one new comment or system entry for a card's activity feed. Sent to the
+// whole room, sender included (clients de-duplicate by entry id). Sent alongside, not instead
+// of, the card:updated/card:moved event for the change itself.
+export const CARD_ACTIVITY = 'card:activity'
 // Columns. Adding, renaming and deleting are shared; ordering and collapsing are each viewer's
 // own layout (stored in their browser) and are never sent. Client -> server:
 export const COLUMN_CREATE = 'column:create' // { boardId, name }

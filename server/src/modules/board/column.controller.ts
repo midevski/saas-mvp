@@ -5,6 +5,7 @@ import { NotFoundError, ValidationError } from '../../lib/errors'
 import { paramAsString } from '../../lib/params'
 import { COLUMN_CREATED, COLUMN_DELETED, COLUMN_UPDATED } from '../../realtime/events'
 import { emitToOrg, requesterSocketId } from '../../realtime/emitter'
+import { publishActivity } from './activity.service'
 import * as boardService from './board.service'
 import * as columnService from './column.service'
 
@@ -61,7 +62,8 @@ export async function updateColumnHandler(req: Request, res: Response) {
 export async function deleteColumnHandler(req: Request, res: Response) {
   const { orgId, columnId } = await columnInOrg(req)
   const { moveCardsTo } = parse(deleteSchema, req.body)
-  const result = await columnService.deleteColumn(columnId, moveCardsTo)
-  broadcast(req, orgId, COLUMN_DELETED, result)
-  res.json(result)
+  const { deleted, activity } = await columnService.deleteColumn(columnId, req.user!.userId, moveCardsTo)
+  broadcast(req, orgId, COLUMN_DELETED, deleted)
+  for (const { cardId, entry } of activity) await publishActivity(orgId, cardId, entry)
+  res.json(deleted)
 }

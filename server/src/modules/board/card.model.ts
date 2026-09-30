@@ -23,6 +23,21 @@ export interface ChecklistDocument {
   items: Types.DocumentArray<ChecklistItemDocument>
 }
 
+export type ActivityType = 'comment' | 'system'
+
+// One entry in a card's feed: something someone said (comment) or did (system, e.g. a move).
+// Append-only — entries are never edited or removed.
+export interface ActivityEntryDocument {
+  _id: Types.ObjectId
+  type: ActivityType
+  // Who said/did it. Every entry has one today; null is reserved for future automated entries
+  // with no human behind them.
+  authorId: Types.ObjectId | null
+  text: string // the comment body, or the system message ("moved this card from To Do to Done")
+  mentions: Types.ObjectId[] // users @mentioned in a comment (always empty for system entries)
+  createdAt: Date
+}
+
 export interface CardDocument {
   boardId: Types.ObjectId
   columnId: Types.ObjectId
@@ -32,6 +47,7 @@ export interface CardDocument {
   createdBy: Types.ObjectId
   attachments: Types.DocumentArray<AttachmentDocument>
   checklists: Types.DocumentArray<ChecklistDocument>
+  activity: Types.DocumentArray<ActivityEntryDocument>
   createdAt: Date
   updatedAt: Date
 }
@@ -58,6 +74,17 @@ const checklistSchema = new Schema<ChecklistDocument>({
   items: { type: [checklistItemSchema], default: [] },
 })
 
+// Embedded like the rest. Excluded from queries by default (select: false): the feed only grows,
+// and it's only needed while a card's detail view is open — board loads and card broadcasts
+// never carry it. Read it with .select('+activity').
+const activityEntrySchema = new Schema<ActivityEntryDocument>({
+  type: { type: String, enum: ['comment', 'system'], required: true },
+  authorId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+  text: { type: String, required: true },
+  mentions: { type: [{ type: Schema.Types.ObjectId, ref: 'User' }], default: [] },
+  createdAt: { type: Date, default: Date.now },
+})
+
 const cardSchema = new Schema<CardDocument>(
   {
     boardId: { type: Schema.Types.ObjectId, ref: 'Board', required: true, index: true },
@@ -69,6 +96,7 @@ const cardSchema = new Schema<CardDocument>(
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     attachments: { type: [attachmentSchema], default: [] },
     checklists: { type: [checklistSchema], default: [] },
+    activity: { type: [activityEntrySchema], default: [], select: false },
   },
   { timestamps: true },
 )

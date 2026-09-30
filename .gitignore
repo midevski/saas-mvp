@@ -139,4 +139,3 @@ dist
 
 # Local card-image uploads (Docker keeps them in the uploads_data volume)
 server/uploads/
-*.md
