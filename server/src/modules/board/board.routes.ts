@@ -4,6 +4,7 @@ import { requireRole } from '../../middleware/requireRole'
 import { requireSubscription } from '../../middleware/requireSubscription'
 import * as boardController from './board.controller'
 import * as checklistController from './checklist.controller'
+import * as columnController from './column.controller'
 
 export const boardRouter = Router()
 
@@ -26,6 +27,12 @@ boardRouter.delete(
   ...boardAccess,
   boardController.deleteAttachmentHandler,
 )
+
+// Columns: board management, so the same gate as every other board mutation
+const columns = '/orgs/:orgId/board/columns'
+boardRouter.post(columns, ...boardAccess, columnController.createColumnHandler)
+boardRouter.patch(`${columns}/:columnId`, ...boardAccess, columnController.updateColumnHandler)
+boardRouter.delete(`${columns}/:columnId`, ...boardAccess, columnController.deleteColumnHandler)
 
 // Checklists: part of managing cards, so the same gate (every role can manage cards)
 const checklists = '/orgs/:orgId/board/cards/:cardId/checklists'

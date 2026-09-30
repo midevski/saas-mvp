@@ -21,22 +21,22 @@ const SEND_INTERVAL_MS = 40
 // Someone whose mouse has been still this long fades out rather than sitting frozen on screen
 const IDLE_HIDE_MS = 5_000
 
-// Three coordinate spaces, because different parts of the page scroll independently:
-//   'column' — pixels relative to one column's card list content (each list scrolls on its own,
-//              so a card is at the same spot for everyone however far they've scrolled it).
-//   'board'  — pixels relative to the board's content track (column headers, add-card forms,
-//              gaps). Its layout is identical for every viewer, so these are exact regardless of
-//              window size or board scroll.
-//   'page'   — pixels relative to the board page container (header, gaps, margins around the
-//              board). Exact for elements at the same offset for everyone (e.g. the title);
-//              text that wraps differently in a narrower window can shift slightly.
-type CursorArea = 'board' | 'page' | 'column'
+// Coordinate spaces, because parts of the page scroll — and are laid out — differently per viewer:
+//   'column'      — relative to one column's card list content (each list scrolls on its own,
+//                   so a card is at the same spot for everyone however far they've scrolled it).
+//   'columnFrame' — relative to one column's whole box (its header, add-card form). Anchored to
+//                   the column itself because each viewer orders and collapses columns their
+//                   own way: "over the To Do header" must land on To Do wherever it sits.
+//   'board'       — relative to the board's content track (the gaps between columns).
+//   'page'        — relative to the board page container (header, margins around the board).
+//                   Exact for elements at the same offset for everyone (e.g. the title).
+type CursorArea = 'board' | 'page' | 'column' | 'columnFrame'
 
 interface CursorPosition {
   x: number
   y: number
   area: CursorArea
-  columnId?: string // only for 'column'
+  columnId?: string // only for 'column' and 'columnFrame'
 }
 
 interface RemoteCursor extends CursorPosition {
@@ -103,6 +103,18 @@ export function LiveCursorsProvider({ orgId, pageRef, boardRef, trackRef, childr
             y: Math.round(e.clientY - content.top),
             area: 'column',
             columnId: list.dataset.cursorColumn!,
+          })
+          return
+        }
+        // Over a column's box (header, add-card form, or a collapsed strip)? Anchor to that column
+        for (const frame of track.querySelectorAll<HTMLElement>('[data-cursor-column-frame]')) {
+          const f = frame.getBoundingClientRect()
+          if (e.clientX < f.left || e.clientX > f.right || e.clientY < f.top || e.clientY > f.bottom) continue
+          throttle.push({
+            x: Math.round(e.clientX - f.left),
+            y: Math.round(e.clientY - f.top),
+            area: 'columnFrame',
+            columnId: frame.dataset.cursorColumnFrame!,
           })
           return
         }
@@ -194,12 +206,23 @@ function placeCursor(
     return { x: x - p.left, y: y - p.top, visible: within(board.getBoundingClientRect(), x, y) }
   }
 
-  const list = track.querySelector<HTMLElement>(`[data-cursor-column="${cursor.columnId}"]`)
-  if (!list) return { x: 0, y: 0, visible: false }
-  const l = list.getBoundingClientRect() // reflects this viewer's scroll of that list
-  const x = l.left + cursor.x
-  const y = l.top + cursor.y
-  return { x: x - p.left, y: y - p.top, visible: within(list.parentElement!.getBoundingClientRect(), x, y) }
+  const list =
+    cursor.area === 'column' ? track.querySelector<HTMLElement>(`[data-cursor-column="${cursor.columnId}"]`) : null
+  if (list) {
+    const l = list.getBoundingClientRect() // reflects this viewer's scroll of that list
+    const x = l.left + cursor.x
+    const y = l.top + cursor.y
+    return { x: x - p.left, y: y - p.top, visible: within(list.parentElement!.getBoundingClientRect(), x, y) }
+  }
+
+  // Anchored to the column's box — also the fallback when this viewer has that column collapsed
+  // (no list to anchor to): the cursor then sits on the slim strip, clamped inside it
+  const frame = track.querySelector<HTMLElement>(`[data-cursor-column-frame="${cursor.columnId}"]`)
+  if (!frame) return { x: 0, y: 0, visible: false } // column deleted meanwhile
+  const f = frame.getBoundingClientRect()
+  const x = f.left + Math.min(cursor.x, f.width - 6)
+  const y = f.top + Math.min(cursor.y, f.height - 6)
+  return { x: x - p.left, y: y - p.top, visible: within(board.getBoundingClientRect(), x, y) }
 }
 
 // One overlay for the whole board page, with exactly one element per remote user that's never

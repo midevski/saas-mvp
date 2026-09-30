@@ -86,7 +86,7 @@ export function toCardDTO(card: WithId<CardDocument>): CardDTO {
   }
 }
 
-function toColumnDTO(column: WithId<ColumnDocument>) {
+export function toColumnDTO(column: WithId<ColumnDocument>) {
   return { id: column._id.toString(), name: column.name, order: column.order }
 }
 
@@ -120,7 +120,7 @@ export async function getOrCreateBoardForOrg(orgId: string): Promise<WithId<Boar
 export async function getBoardState(orgId: string) {
   const board = await getOrCreateBoardForOrg(orgId)
   const [columns, cards] = await Promise.all([
-    Column.find({ boardId: board._id }).sort({ order: 1 }),
+    Column.find({ boardId: board._id }).sort({ order: 1, _id: 1 }),
     Card.find({ boardId: board._id }).sort({ order: 1 }),
   ])
   return {
@@ -158,11 +158,24 @@ export async function createCard(
   return toCardDTO(card)
 }
 
-async function writeOrder(ids: Types.ObjectId[], extraSet: Record<string, unknown> = {}) {
+// Shared by cards (position within a column) and columns (position on the board): rewrite the
+// given documents' `order` to 0..n-1 in the order the ids are listed
+export async function writeOrder(
+  model: typeof Card | typeof Column,
+  ids: Types.ObjectId[],
+  extraSet: Record<string, unknown> = {},
+) {
   if (ids.length === 0) return
-  await Card.bulkWrite(
-    ids.map((_id, order) => ({ updateOne: { filter: { _id }, update: { $set: { order, ...extraSet } } } })),
-  )
+  const ops = ids.map((_id, order) => ({ updateOne: { filter: { _id }, update: { $set: { order, ...extraSet } } } }))
+  await (model as typeof Card).bulkWrite(ops)
+}
+
+// Insert `id` into `ids` at `toOrder` (clamped to the ends); returns the new list and the index used
+export function spliceAt(ids: Types.ObjectId[], id: Types.ObjectId, toOrder: number) {
+  const index = Math.max(0, Math.min(toOrder, ids.length))
+  const next = [...ids]
+  next.splice(index, 0, id)
+  return { ids: next, index }
 }
 
 // Ordering strategy: integer re-sequencing. On every move, the affected column(s) are
@@ -185,16 +198,21 @@ export async function moveCard(
   const siblings = await Card.find({ columnId: toColumn._id, _id: { $ne: card._id } })
     .sort({ order: 1 })
     .select('_id')
-  const index = Math.max(0, Math.min(toOrder, siblings.length))
-  const targetIds = siblings.map((s) => s._id)
-  targetIds.splice(index, 0, card._id)
+  const { ids: targetIds, index } = spliceAt(
+    siblings.map((s) => s._id),
+    card._id,
+    toOrder,
+  )
 
   await Card.updateOne({ _id: card._id }, { $set: { columnId: toColumn._id } })
-  await writeOrder(targetIds)
+  await writeOrder(Card, targetIds)
 
   if (!fromColumnId.equals(toColumn._id)) {
     const remaining = await Card.find({ columnId: fromColumnId }).sort({ order: 1 }).select('_id')
-    await writeOrder(remaining.map((c) => c._id))
+    await writeOrder(
+      Card,
+      remaining.map((c) => c._id),
+    )
   }
 
   const updated = (await Card.findById(card._id))!

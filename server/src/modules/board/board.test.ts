@@ -22,9 +22,16 @@ import {
   CURSOR_MOVE,
   CURSOR_UPDATE,
   PRESENCE_UPDATE,
+  COLUMN_CREATE,
+  COLUMN_CREATED,
+  COLUMN_DELETE,
+  COLUMN_DELETED,
+  COLUMN_UPDATE,
+  COLUMN_UPDATED,
 } from '../../realtime/events'
 import { Subscription } from '../billing/subscription.model'
 import { Card } from './card.model'
+import { Column } from './column.model'
 import * as boardService from './board.service'
 
 let mongod: MongoMemoryServer
@@ -95,6 +102,14 @@ async function setupSubscribedOrg() {
   await addMember(orgId, owner.accessToken, member)
   await subscribe(orgId)
   return { owner, member, orgId }
+}
+
+// A second, unrelated subscribed org (for cross-org checks)
+async function setupSubscribedOrgFor(ownerEmail: string) {
+  const owner = await registerUser(ownerEmail)
+  const orgId = await createOrg(owner.accessToken)
+  await subscribe(orgId)
+  return { owner, orgId }
 }
 
 function connect(token?: string): Promise<ClientSocket> {
@@ -571,6 +586,14 @@ describe('live cursors', () => {
     await nothing
   })
 
+  it("relays positions anchored to a column's whole box (header, add-card form)", async () => {
+    const { a, b, owner, orgId } = await twoOnBoard()
+    const columnId = new mongoose.Types.ObjectId().toString()
+    const received = nextEvent(b, CURSOR_UPDATE)
+    a.emit(CURSOR_MOVE, { orgId, x: 120, y: 18, area: 'columnFrame', columnId })
+    expect(await received).toEqual({ userId: owner.userId, x: 120, y: 18, area: 'columnFrame', columnId })
+  })
+
   it('relays "left the board" as null coordinates', async () => {
     const { a, b, owner, orgId } = await twoOnBoard()
     const received = nextEvent(b, CURSOR_UPDATE)
@@ -806,6 +829,232 @@ describe('card attachments', () => {
       const deleteRes = await request(app).delete(`${viaOwnOrg}/${attachment.id}`).set(authed(attacker.accessToken))
       expect(deleteRes.status).toBe(404)
       expect((await Card.findById(card.id))!.attachments).toHaveLength(1)
+    })
+  })
+})
+
+describe('columns', () => {
+  async function setupBoard() {
+    const { owner, member, orgId } = await setupSubscribedOrg()
+    const state = await boardService.getBoardState(orgId)
+    const [todo, doing, done] = state.columns.map((c) => c.id) as [string, string, string]
+    return { owner, member, orgId, boardId: state.board.id, todo, doing, done, base: `/orgs/${orgId}/board/columns` }
+  }
+
+  const names = async (orgId: string) => (await boardService.getBoardState(orgId)).columns.map((c) => c.name)
+  // One at a time: cards created concurrently could share a position and come back in any order
+  async function addCards(boardId: string, columnId: string, userId: string, titles: string[]) {
+    for (const t of titles) await boardService.createCard(boardId, columnId, t, userId)
+  }
+  const titlesIn = async (columnId: string) =>
+    (await Card.find({ columnId }).sort({ order: 1 })).map((c) => c.title)
+
+  describe('REST', () => {
+    it('creates a column at the end of the row', async () => {
+      const { member, orgId, base } = await setupBoard()
+      const res = await request(app).post(base).set(authed(member.accessToken)).send({ name: '  Review  ' })
+      expect(res.status).toBe(201)
+      expect(res.body.column).toMatchObject({ name: 'Review', order: 3 })
+      expect(await names(orgId)).toEqual(['To Do', 'In Progress', 'Done', 'Review'])
+    })
+
+    it('renames through PATCH', async () => {
+      const { member, orgId, base, done } = await setupBoard()
+      const renamed = await request(app).patch(`${base}/${done}`).set(authed(member.accessToken)).send({ name: 'Shipped' })
+      expect(renamed.status).toBe(200)
+      expect(renamed.body.column.name).toBe('Shipped')
+      expect(await names(orgId)).toEqual(['To Do', 'In Progress', 'Shipped'])
+    })
+
+    it('never accepts column order — each viewer arranges columns in their own browser', async () => {
+      const { member, orgId, base, done } = await setupBoard()
+      const res = await request(app).patch(`${base}/${done}`).set(authed(member.accessToken)).send({ order: 0 })
+      expect(res.status).toBe(400)
+      expect(res.body.error).toMatch(/"order" is a per-browser layout setting/)
+      expect(await names(orgId)).toEqual(['To Do', 'In Progress', 'Done'])
+    })
+
+    it('never accepts collapse state — that stays in each browser', async () => {
+      const { member, base, todo } = await setupBoard()
+      const res = await request(app).patch(`${base}/${todo}`).set(authed(member.accessToken)).send({ collapsed: true })
+      expect(res.status).toBe(400)
+      expect(res.body.error).toMatch(/per-browser/)
+      const alsoWithName = await request(app)
+        .patch(`${base}/${todo}`)
+        .set(authed(member.accessToken))
+        .send({ name: 'X', collapsed: true })
+      expect(alsoWithName.status).toBe(400)
+    })
+
+    it('validates names', async () => {
+      const { member, base, todo } = await setupBoard()
+      expect((await request(app).post(base).set(authed(member.accessToken)).send({ name: '   ' })).status).toBe(400)
+      expect((await request(app).post(base).set(authed(member.accessToken)).send({ name: 'x'.repeat(61) })).status).toBe(400)
+      expect((await request(app).patch(`${base}/${todo}`).set(authed(member.accessToken)).send({})).status).toBe(400)
+    })
+
+    it('deletes an empty column and re-sequences the rest', async () => {
+      const { member, orgId, base, doing } = await setupBoard()
+      const res = await request(app).delete(`${base}/${doing}`).set(authed(member.accessToken))
+      expect(res.status).toBe(200)
+      expect(res.body).toEqual({ columnId: doing, deletedCardIds: [] })
+      expect(await names(orgId)).toEqual(['To Do', 'Done'])
+      expect((await request(app).delete(`${base}/${doing}`).set(authed(member.accessToken))).status).toBe(404)
+    })
+
+    it('deleting without moveCardsTo deletes the cards too', async () => {
+      const { owner, member, boardId, base, todo, done } = await setupBoard()
+      await addCards(boardId, todo, owner.userId, ['a', 'b'])
+      await addCards(boardId, done, owner.userId, ['keep'])
+
+      const res = await request(app).delete(`${base}/${todo}`).set(authed(member.accessToken))
+      expect(res.body.deletedCardIds).toHaveLength(2)
+      expect(await Card.countDocuments({ boardId })).toBe(1)
+      expect(await titlesIn(done)).toEqual(['keep'])
+    })
+
+    it('deleting with moveCardsTo appends the cards (in order) to the destination', async () => {
+      const { owner, member, boardId, base, todo, done } = await setupBoard()
+      for (const t of ['first', 'second', 'third']) await boardService.createCard(boardId, todo, t, owner.userId)
+      await boardService.createCard(boardId, done, 'already there', owner.userId)
+
+      const res = await request(app)
+        .delete(`${base}/${todo}`)
+        .set(authed(member.accessToken))
+        .send({ moveCardsTo: done })
+      expect(res.status).toBe(200)
+      expect(res.body.movedCards.map((c: { title: string; columnId: string }) => [c.title, c.columnId])).toEqual([
+        ['first', done],
+        ['second', done],
+        ['third', done],
+      ])
+      expect(await titlesIn(done)).toEqual(['already there', 'first', 'second', 'third'])
+      expect((await Card.find({ columnId: done }).sort({ order: 1 })).map((c) => c.order)).toEqual([0, 1, 2, 3])
+      expect(await Column.exists({ _id: todo })).toBeNull()
+    })
+
+    it('rejects moving cards into the deleted column itself or another board, deleting nothing', async () => {
+      const { owner, member, boardId, base, todo } = await setupBoard()
+      await addCards(boardId, todo, owner.userId, ['a'])
+      const other = await setupSubscribedOrgFor('other-owner@example.com')
+      const foreignColumn = (await boardService.getBoardState(other.orgId)).columns[0]!.id
+
+      const self = await request(app).delete(`${base}/${todo}`).set(authed(member.accessToken)).send({ moveCardsTo: todo })
+      expect(self.status).toBe(400)
+      const foreign = await request(app)
+        .delete(`${base}/${todo}`)
+        .set(authed(member.accessToken))
+        .send({ moveCardsTo: foreignColumn })
+      expect(foreign.status).toBe(404)
+      expect(await Column.exists({ _id: todo })).not.toBeNull()
+      expect(await titlesIn(todo)).toEqual(['a'])
+    })
+
+    describe('permissions match every other board mutation', () => {
+      it('rejects unauthenticated requests', async () => {
+        const { base } = await setupBoard()
+        expect((await request(app).post(base).send({ name: 'x' })).status).toBe(401)
+      })
+
+      it('rejects non-members with 404', async () => {
+        const { base, todo } = await setupBoard()
+        const outsider = await registerUser('outsider@example.com')
+        expect((await request(app).post(base).set(authed(outsider.accessToken)).send({ name: 'x' })).status).toBe(404)
+        expect((await request(app).delete(`${base}/${todo}`).set(authed(outsider.accessToken))).status).toBe(404)
+        expect(await Column.exists({ _id: todo })).not.toBeNull()
+      })
+
+      it('rejects unsubscribed orgs with 402', async () => {
+        const { member, orgId, base, todo } = await setupBoard()
+        await Subscription.updateOne({ orgId }, { status: 'canceled' })
+        expect((await request(app).post(base).set(authed(member.accessToken)).send({ name: 'x' })).status).toBe(402)
+        expect((await request(app).patch(`${base}/${todo}`).set(authed(member.accessToken)).send({ name: 'y' })).status).toBe(
+          402,
+        )
+      })
+
+      it("rejects reaching another org's column through your own org's route", async () => {
+        const { todo } = await setupBoard()
+        const attacker = await setupSubscribedOrgFor('attacker@example.com')
+        const via = `/orgs/${attacker.orgId}/board/columns/${todo}`
+        expect((await request(app).patch(via).set(authed(attacker.owner.accessToken)).send({ name: 'pwned' })).status).toBe(
+          404,
+        )
+        expect((await request(app).delete(via).set(authed(attacker.owner.accessToken))).status).toBe(404)
+        expect((await Column.findById(todo))!.name).toBe('To Do')
+      })
+    })
+  })
+
+  describe('socket events', () => {
+    async function twoOnBoard() {
+      const setup = await setupBoard()
+      const a = await connect(setup.owner.accessToken)
+      const b = await connect(setup.member.accessToken)
+      await joinBoard(a, setup.orgId)
+      await joinBoard(b, setup.orgId)
+      return { ...setup, a, b }
+    }
+
+    it('create / rename broadcast to the rest of the room, not the sender; moving is not shared', async () => {
+      const { a, b, boardId, orgId, done } = await twoOnBoard()
+
+      let received = nextEvent(b, COLUMN_CREATED)
+      let silent = expectNoEvent(a, COLUMN_CREATED)
+      const created = await emitAck(a, COLUMN_CREATE, { boardId, name: 'Review' })
+      expect(created).toMatchObject({ ok: true, column: { name: 'Review', order: 3 } })
+      expect((await received).column).toMatchObject({ id: created.column.id, name: 'Review' })
+      await silent
+
+      received = nextEvent(b, COLUMN_UPDATED)
+      silent = expectNoEvent(a, COLUMN_UPDATED)
+      await emitAck(a, COLUMN_UPDATE, { columnId: created.column.id, name: 'QA' })
+      expect((await received).column).toMatchObject({ id: created.column.id, name: 'QA' })
+      await silent
+
+      // Reordering is each viewer's own layout: there is no shared move event any more, so
+      // nothing another client sends can rearrange this board for everyone
+      const nothing = expectNoEvent(b, 'column:moved')
+      a.emit('column:move', { columnId: done, toOrder: 0 })
+      await nothing
+      expect(await names(orgId)).toEqual(['To Do', 'In Progress', 'Done', 'QA'])
+    })
+
+    it('a collapse flag sent over the socket is rejected, not stored', async () => {
+      const { a, b, todo } = await twoOnBoard()
+      const nothing = expectNoEvent(b, COLUMN_UPDATED)
+      const ack = await emitAck(a, COLUMN_UPDATE, { columnId: todo, name: 'To Do', collapsed: true })
+      expect(ack).toEqual({ ok: false, error: 'invalid_payload' })
+      await nothing
+    })
+
+    it('delete broadcasts the outcome for the cards in one event', async () => {
+      const { a, b, owner, boardId, todo, doing } = await twoOnBoard()
+      await addCards(boardId, todo, owner.userId, ['x', 'y'])
+
+      const received = nextEvent(b, COLUMN_DELETED)
+      const ack = await emitAck(a, COLUMN_DELETE, { columnId: todo, moveCardsTo: doing })
+      expect(ack.ok).toBe(true)
+      const event = await received
+      expect(event.columnId).toBe(todo)
+      expect(event.movedCards.map((c: { title: string; columnId: string }) => [c.title, c.columnId])).toEqual([
+        ['x', doing],
+        ['y', doing],
+      ])
+    })
+
+    it('rejects non-members and unsubscribed orgs, changing nothing', async () => {
+      const { a, orgId, boardId, todo } = await twoOnBoard()
+      const outsider = await connect((await registerUser('outsider@example.com')).accessToken)
+      expect(await emitAck(outsider, COLUMN_CREATE, { boardId, name: 'x' })).toEqual({ ok: false, error: 'not_found' })
+      expect(await emitAck(outsider, COLUMN_DELETE, { columnId: todo })).toEqual({ ok: false, error: 'not_found' })
+
+      await Subscription.updateOne({ orgId }, { status: 'canceled' })
+      expect(await emitAck(a, COLUMN_UPDATE, { columnId: todo, name: 'y' })).toEqual({
+        ok: false,
+        error: 'subscription_required',
+      })
+      expect(await names(orgId)).toEqual(['To Do', 'In Progress', 'Done'])
     })
   })
 })

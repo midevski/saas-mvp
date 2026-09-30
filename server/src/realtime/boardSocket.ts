@@ -1,7 +1,8 @@
 import { z } from 'zod'
-import { NotFoundError } from '../lib/errors'
+import { NotFoundError, ValidationError } from '../lib/errors'
 import { isOrgSubscribed } from '../modules/billing/billing.service'
 import * as boardService from '../modules/board/board.service'
+import * as columnService from '../modules/board/column.service'
 import { findMembership } from '../modules/orgs/org.service'
 import {
   BOARD_JOIN,
@@ -15,6 +16,12 @@ import {
   CARD_MOVED,
   CARD_UPDATE,
   CARD_UPDATED,
+  COLUMN_CREATE,
+  COLUMN_CREATED,
+  COLUMN_DELETE,
+  COLUMN_DELETED,
+  COLUMN_UPDATE,
+  COLUMN_UPDATED,
   CURSOR_MOVE,
   CURSOR_UPDATE,
   orgRoom,
@@ -42,14 +49,28 @@ const updateSchema = z
   })
   .refine((d) => d.title !== undefined || d.description !== undefined, 'Nothing to update')
 const deleteSchema = z.object({ cardId: objectId })
-// Pixels relative to an anchor chosen by `area`: 'board' = the board's content track (scrolls
-// with the columns), 'column' = one column's card list content (each list scrolls on its own),
-// 'page' = the board page container (header, gaps, margins — can be negative, e.g. in the left
-// margin). null/null hides the cursor (pointer left the window).
+const columnName = z.string().trim().min(1).max(60)
+const columnCreateSchema = z.object({ boardId: objectId, name: columnName })
+// .strict(): column order and collapse are per-browser layout and must never reach the server
+const columnUpdateSchema = z.object({ columnId: objectId, name: columnName }).strict()
+const columnDeleteSchema = z.object({ columnId: objectId, moveCardsTo: objectId.optional() })
+// Pixels relative to an anchor chosen by `area`:
+//   'column'      = one column's card list content (each list scrolls on its own)
+//   'columnFrame' = one column's whole box (header, add-card form) — anchored to the column
+//                   itself, since each viewer can order and collapse columns differently
+//   'board'       = the board's content track (the gaps between columns)
+//   'page'        = the board page container (header, margins — can be negative)
+// null/null hides the cursor (pointer left the window).
 const coordinate = z.number().finite().min(-5_000).max(20_000)
 const cursorSchema = z.union([
   z.object({ orgId: objectId, x: coordinate, y: coordinate, area: z.enum(['board', 'page']) }),
-  z.object({ orgId: objectId, x: coordinate, y: coordinate, area: z.literal('column'), columnId: objectId }),
+  z.object({
+    orgId: objectId,
+    x: coordinate,
+    y: coordinate,
+    area: z.enum(['column', 'columnFrame']),
+    columnId: objectId,
+  }),
   z.object({ orgId: objectId, x: z.null(), y: z.null() }),
 ])
 
@@ -81,6 +102,7 @@ function handler<T>(schema: z.ZodType<T>, fn: (payload: T) => Promise<Record<str
       reply({ ok: true, ...(await fn(parsed.data)) })
     } catch (err) {
       if (err instanceof NotFoundError) reply({ ok: false, error: 'not_found' })
+      else if (err instanceof ValidationError) reply({ ok: false, error: 'invalid_payload' })
       else if (err instanceof SubscriptionRequiredError) reply({ ok: false, error: 'subscription_required' })
       else {
         console.error('[socket] handler failed:', err)
@@ -207,6 +229,40 @@ export function registerBoardHandlers(
       .to(orgRoom(orgId))
       .volatile.emit(CURSOR_UPDATE, { userId, x, y, area, ...(columnId ? { columnId } : {}) })
   })
+
+  // Column events: same rules as cards — the org comes from the DB, permissions are re-checked
+  // on every event, and broadcasts skip the sender (their UI already updated optimistically).
+
+  socket.on(
+    COLUMN_CREATE,
+    handler(columnCreateSchema, async ({ boardId, name }) => {
+      const orgId = await assertCanAccessOrg(userId, await boardService.getOrgIdForBoard(boardId))
+      const column = await columnService.createColumn(boardId, name)
+      socket.to(orgRoom(orgId)).emit(COLUMN_CREATED, { column })
+      return { column }
+    }),
+  )
+
+  socket.on(
+    COLUMN_UPDATE,
+    handler(columnUpdateSchema, async ({ columnId, name }) => {
+      const orgId = await assertCanAccessOrg(userId, await columnService.getOrgIdForColumn(columnId))
+      const column = await columnService.renameColumn(columnId, name)
+      socket.to(orgRoom(orgId)).emit(COLUMN_UPDATED, { column })
+      return { column }
+    }),
+  )
+
+
+  socket.on(
+    COLUMN_DELETE,
+    handler(columnDeleteSchema, async ({ columnId, moveCardsTo }) => {
+      const orgId = await assertCanAccessOrg(userId, await columnService.getOrgIdForColumn(columnId))
+      const result = await columnService.deleteColumn(columnId, moveCardsTo)
+      socket.to(orgRoom(orgId)).emit(COLUMN_DELETED, result)
+      return { ...result }
+    }),
+  )
 
   // Card events: the orgId to check is always derived from the DB record, never from the client.
   // Broadcasts use socket.to(), which excludes the sender — their UI already updated optimistically.

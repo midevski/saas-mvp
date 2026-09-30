@@ -891,9 +891,149 @@ code {
 .board-column-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
+  padding: 12px 10px 10px 8px;
+}
+/* The heading wraps the click-to-rename name, so it's still a real heading for everyone */
+.column-heading {
+  flex: 1;
+  min-width: 0;
+  font-size: 1rem;
+}
+.column-name {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+.column-drag-handle {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 3px;
+  color: var(--color-fg-faint);
+  cursor: grab;
+}
+.column-drag-handle:hover {
+  background: #0f11150f;
+  color: var(--color-fg);
+}
+.column-drag-handle:active {
+  cursor: grabbing;
+}
+.column-icon-btn {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--color-fg-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.column-icon-btn:hover,
+.column-icon-btn[aria-expanded='true'][aria-haspopup] {
+  background: #0f11150f;
+  color: var(--color-fg);
+}
+.column-menu {
+  position: relative;
+}
+.column-menu-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 170px;
+  padding: 4px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-paper);
+  box-shadow: var(--shadow-lift);
+  animation: modal-in 0.2s var(--ease-out-expo);
+}
+.user-menu-item:disabled {
+  color: var(--color-fg-faint);
+  cursor: default;
+  background: transparent;
+}
+.user-menu-item.is-danger {
+  color: var(--color-accent-600);
+}
+
+/* Where a dragged column will land */
+.board-column.column-drop-before {
+  box-shadow: -4px 0 0 -1px var(--color-accent);
+}
+.board-column.column-drop-after {
+  box-shadow: 4px 0 0 -1px var(--color-accent);
+}
+
+/* Collapsed (this browser only): a slim strip with the title running vertically */
+.board-column.is-collapsed {
+  flex: 0 0 48px;
+  align-items: center;
   gap: 8px;
-  padding: 14px 14px 10px;
+  padding: 10px 0;
+  cursor: pointer;
+}
+.board-column.is-collapsed:hover {
+  border-color: var(--color-line-strong);
+}
+.collapsed-title {
+  writing-mode: vertical-rl;
+  max-height: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9375rem;
+}
+
+/* End-of-row "+ Add column" */
+.add-column-button {
+  flex: 0 0 240px;
+  align-self: flex-start;
+  padding: 14px;
+  border: 1.5px dashed var(--color-line-strong);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--color-fg-muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background-color 0.15s ease;
+}
+.add-column-button:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-600);
+}
+.add-column-form {
+  display: flex;
+  flex: 0 0 240px;
+  flex-direction: column;
+  align-self: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: #ece8dd99;
 }
 /* Long lists scroll inside the column (about 5 cards tall) instead of stretching the page */
 .board-column-scroll {

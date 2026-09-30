@@ -22,14 +22,33 @@ import {
   CARD_MOVED,
   CARD_UPDATE,
   CARD_UPDATED,
+  COLUMN_CREATE,
+  COLUMN_CREATED,
+  COLUMN_DELETE,
+  COLUMN_DELETED,
+  COLUMN_UPDATE,
+  COLUMN_UPDATED,
 } from '../../lib/socketEvents'
 import { useIsSubscribed } from '../billing/useIsSubscribed'
-import { boardReducer, cardsInColumn, type BoardState, type CardData } from './boardState'
-import { Column } from './Column'
+import {
+  boardReducer,
+  cardsInColumn,
+  sortedColumns,
+  type BoardState,
+  type CardData,
+  type ColumnData,
+} from './boardState'
+import { AddColumn } from './AddColumn'
+import { Column, type DropSide } from './Column'
+import { DeleteColumnDialog } from './DeleteColumnDialog'
+import { useCollapsedColumns } from './useCollapsedColumns'
+import { useColumnOrder } from './useColumnOrder'
 
 const ACK_TIMEOUT_MS = 5000
 
-type Ack = { ok: true; card?: CardData } | { ok: false; error: string }
+type Ack =
+  | { ok: true; card?: CardData; column?: ColumnData; movedCards?: CardData[] }
+  | { ok: false; error: string }
 
 export function BoardPage() {
   const { orgId } = useParams<{ orgId: string }>()
@@ -82,6 +101,11 @@ function LiveBoard({ orgId }: { orgId: string }) {
   const trackRef = useRef<HTMLDivElement>(null)
   // The card whose detail view is open (looked up live in board state on every render)
   const [openCardId, setOpenCardId] = useState<string | null>(null)
+  // The column whose delete dialog is open
+  const [deletingColumnId, setDeletingColumnId] = useState<string | null>(null)
+  // Per-browser only (localStorage): never sent to the server or other users
+  const { isCollapsed, toggle: toggleCollapsed } = useCollapsedColumns(state?.board.id ?? null)
+  const { arrange: arrangeColumns, moveColumn: moveColumnLocally } = useColumnOrder(state?.board.id ?? null)
 
   const join = useCallback(() => {
     socket.timeout(ACK_TIMEOUT_MS).emit(BOARD_JOIN, { orgId }, (err: Error | null, ack: Ack) => {
@@ -108,12 +132,22 @@ function LiveBoard({ orgId }: { orgId: string }) {
     const onMoved = (m: { cardId: string; toColumnId: string; toOrder: number }) => dispatch({ type: 'moved', ...m })
     const onUpdated = ({ card }: { card: CardData }) => dispatch({ type: 'updated', card })
     const onDeleted = ({ cardId }: { cardId: string }) => dispatch({ type: 'deleted', cardId })
+    const onColumnCreated = ({ column }: { column: ColumnData }) => dispatch({ type: 'columnCreated', column })
+    const onColumnUpdated = ({ column }: { column: ColumnData }) =>
+      dispatch({ type: 'columnRenamed', columnId: column.id, name: column.name })
+    // Also covers what happened to its cards (moved elsewhere or deleted), in one step —
+    // safe even mid-interaction, e.g. while a card from that column is open
+    const onColumnDeleted = (d: { columnId: string; movedCards?: CardData[] }) =>
+      dispatch({ type: 'columnDeleted', columnId: d.columnId, ...(d.movedCards ? { movedCards: d.movedCards } : {}) })
 
     socket.on(BOARD_STATE, onState)
     socket.on(CARD_CREATED, onCreated)
     socket.on(CARD_MOVED, onMoved)
     socket.on(CARD_UPDATED, onUpdated)
     socket.on(CARD_DELETED, onDeleted)
+    socket.on(COLUMN_CREATED, onColumnCreated)
+    socket.on(COLUMN_UPDATED, onColumnUpdated)
+    socket.on(COLUMN_DELETED, onColumnDeleted)
     // Rooms don't survive a reconnect (dropped network, server restart) — re-join on every
     // connect, which also delivers a fresh board:state covering anything missed meanwhile
     socket.on('connect', join)
@@ -125,6 +159,9 @@ function LiveBoard({ orgId }: { orgId: string }) {
       socket.off(CARD_MOVED, onMoved)
       socket.off(CARD_UPDATED, onUpdated)
       socket.off(CARD_DELETED, onDeleted)
+      socket.off(COLUMN_CREATED, onColumnCreated)
+      socket.off(COLUMN_UPDATED, onColumnUpdated)
+      socket.off(COLUMN_DELETED, onColumnDeleted)
       socket.off('connect', join)
       // The socket outlives this page — tell the server we stopped viewing the board, so we
       // leave its room and drop out of its presence list
@@ -175,6 +212,55 @@ function LiveBoard({ orgId }: { orgId: string }) {
     send(CARD_DELETE, { cardId })
   }
 
+  // ---- Columns: same pattern as cards (optimistic, then confirmed; resync on failure) ----
+  // The board's shared columns, in this browser's own order
+  const columns = arrangeColumns(sortedColumns(state.columns))
+
+  function createColumn(name: string) {
+    // Not optimistic: waits for the server-assigned id
+    send(COLUMN_CREATE, { boardId: state!.board.id, name }, (ack) => {
+      if (ack.column) dispatch({ type: 'columnCreated', column: ack.column })
+    })
+  }
+
+  function renameColumn(columnId: string, name: string) {
+    dispatch({ type: 'columnRenamed', columnId, name })
+    send(COLUMN_UPDATE, { columnId, name })
+  }
+
+  // Reordering is this viewer's own layout (like collapsing): saved in this browser only, never
+  // sent — so it can't move columns around under anyone else
+  function moveColumn(columnId: string, toIndex: number) {
+    moveColumnLocally(columns, columnId, toIndex)
+  }
+
+  // Drop position -> index among the other columns
+  function dropColumn(draggedId: string, targetId: string, side: DropSide) {
+    const others = columns.filter((c) => c.id !== draggedId)
+    const targetIndex = others.findIndex((c) => c.id === targetId)
+    if (targetIndex === -1) return
+    moveColumn(draggedId, side === 'before' ? targetIndex : targetIndex + 1)
+  }
+
+  function deleteColumn(columnId: string, moveCardsTo?: string) {
+    setDeletingColumnId(null)
+    // Optimistic: the cards land at the bottom of the destination, in their current order
+    const movedCards = moveCardsTo
+      ? cardsInColumn(state!.cards, columnId).map((card, i) => ({
+          ...card,
+          columnId: moveCardsTo,
+          order: cardsInColumn(state!.cards, moveCardsTo).length + i,
+        }))
+      : undefined
+    dispatch({ type: 'columnDeleted', columnId, ...(movedCards ? { movedCards } : {}) })
+    send(COLUMN_DELETE, { columnId, ...(moveCardsTo ? { moveCardsTo } : {}) }, (ack) => {
+      // The server's version of where the cards ended up is authoritative
+      if (ack.movedCards) dispatch({ type: 'columnDeleted', columnId, movedCards: ack.movedCards })
+    })
+  }
+
+  const deletingColumn = columns.find((c) => c.id === deletingColumnId)
+
   return (
     <LiveCursorsProvider orgId={orgId} pageRef={pageRef} boardRef={boardRef} trackRef={trackRef}>
       <div className="board-page" ref={pageRef}>
@@ -199,19 +285,37 @@ function LiveBoard({ orgId }: { orgId: string }) {
         )}
         <div className="board" ref={boardRef}>
           <div className="board-track" ref={trackRef}>
-            {state.columns.map((column) => (
+            {columns.map((column, index) => (
               <Column
                 key={column.id}
                 column={column}
                 cards={cardsInColumn(state.cards, column.id)}
+                isFirst={index === 0}
+                isLast={index === columns.length - 1}
+                collapsed={isCollapsed(column.id)}
+                onToggleCollapse={() => toggleCollapsed(column.id)}
+                onRename={(name) => renameColumn(column.id, name)}
+                onRequestDelete={() => setDeletingColumnId(column.id)}
+                onColumnDrop={(draggedId, side) => dropColumn(draggedId, column.id, side)}
+                onShift={(delta) => moveColumn(column.id, index + delta)}
                 onCreate={createCard}
                 onMove={moveCard}
                 onOpen={setOpenCardId}
                 onDelete={deleteCard}
               />
             ))}
+            <AddColumn onAdd={createColumn} />
           </div>
         </div>
+        {deletingColumn && (
+          <DeleteColumnDialog
+            column={deletingColumn}
+            cardCount={cardsInColumn(state.cards, deletingColumn.id).length}
+            otherColumns={columns.filter((c) => c.id !== deletingColumn.id)}
+            onConfirm={(moveCardsTo) => deleteColumn(deletingColumn.id, moveCardsTo)}
+            onCancel={() => setDeletingColumnId(null)}
+          />
+        )}
         <CursorOverlay />
       </div>
       {openCard && (

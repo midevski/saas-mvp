@@ -14,6 +14,18 @@ export const CARD_CREATED = 'card:created'
 export const CARD_MOVED = 'card:moved'
 export const CARD_UPDATED = 'card:updated'
 export const CARD_DELETED = 'card:deleted'
+// Columns. Adding, renaming and deleting are shared; ordering and collapsing are each viewer's
+// own layout (stored in their browser) and are never sent. Client -> server:
+export const COLUMN_CREATE = 'column:create' // { boardId, name }
+export const COLUMN_UPDATE = 'column:update' // { columnId, name } — rename only
+export const COLUMN_DELETE = 'column:delete' // { columnId, moveCardsTo? }
+// Server -> rest of the room:
+export const COLUMN_CREATED = 'column:created' // { column }
+export const COLUMN_UPDATED = 'column:updated' // { column }
+// { columnId, movedCards? | deletedCardIds? } — one event carries the cards' outcome too, so
+// other clients apply the whole deletion atomically rather than through a burst of card events
+export const COLUMN_DELETED = 'column:deleted'
+
 // { onlineUserIds: string[] } — everyone in the room, whenever board presence changes
 export const PRESENCE_UPDATE = 'presence:update'
 

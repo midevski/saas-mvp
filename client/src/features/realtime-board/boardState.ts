@@ -54,6 +54,16 @@ export type BoardAction =
   | { type: 'moved'; cardId: string; toColumnId: string; toOrder: number }
   | { type: 'updated'; card: CardData }
   | { type: 'deleted'; cardId: string }
+  | { type: 'columnCreated'; column: ColumnData }
+  | { type: 'columnRenamed'; columnId: string; name: string }
+  // One step for the column and what happened to its cards (moved elsewhere, or deleted)
+  | { type: 'columnDeleted'; columnId: string; movedCards?: CardData[] }
+
+// The board's shared *default* order (creation order). Each viewer may rearrange columns for
+// themselves on top of this — see useColumnOrder.
+export function sortedColumns(columns: ColumnData[]) {
+  return [...columns].sort((a, b) => a.order - b.order)
+}
 
 // Across all of a card's checklists — for the progress shown in the detail view and on the card face
 export function checklistProgress(checklists: ChecklistData[]) {
@@ -126,5 +136,29 @@ export function boardReducer(state: BoardState | null, action: BoardAction): Boa
       }
     case 'deleted':
       return { ...state, cards: state.cards.filter((c) => c.id !== action.cardId) }
+
+    case 'columnCreated':
+      if (state.columns.some((c) => c.id === action.column.id)) return state
+      return { ...state, columns: [...state.columns, action.column] }
+    case 'columnRenamed':
+      return {
+        ...state,
+        columns: state.columns.map((c) => (c.id === action.columnId ? { ...c, name: action.name } : c)),
+      }
+    case 'columnDeleted': {
+      // Safe even if the column is already gone (e.g. our own optimistic delete, then the ack)
+      const moved = new Map((action.movedCards ?? []).map((c) => [c.id, c]))
+      const remaining = sortedColumns(state.columns.filter((c) => c.id !== action.columnId))
+      return {
+        ...state,
+        columns: remaining.map((c, order) => ({ ...c, order })),
+        cards: state.cards
+          .filter((c) => c.columnId !== action.columnId || moved.has(c.id))
+          .map((c) => {
+            const next = moved.get(c.id)
+            return next ? { ...c, columnId: next.columnId, order: next.order } : c
+          }),
+      }
+    }
   }
 }

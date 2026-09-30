@@ -118,10 +118,10 @@ test('live cursors: labeled, aligned across window sizes and scroll, throttled, 
     await expect(cursorOf(pageB, owner)).toHaveAttribute('data-cursor-area', 'page')
     await expectCursorOver(pageB, owner, await titleSpot(pageB))
 
-    // And back onto the board: it switches to board coordinates again
+    // And back onto a column header: anchored to that column again
     const doneOnA = await centerOf(pageA, 'Done')
     await pageA.mouse.move(doneOnA.x, doneOnA.y)
-    await expect(cursorOf(pageB, owner)).toHaveAttribute('data-cursor-area', 'board')
+    await expect(cursorOf(pageB, owner)).toHaveAttribute('data-cursor-area', 'columnFrame')
     await expectCursorOver(pageB, owner, await centerOf(pageB, 'Done'))
   })
 
@@ -154,7 +154,7 @@ test('live cursors: labeled, aligned across window sizes and scroll, throttled, 
       () => (window as unknown as { __samples: { y: number; area: string }[] }).__samples,
     )
     const areasSeen = new Set(samples.map((s) => s.area))
-    expect([...areasSeen].sort()).toEqual(['board', 'column', 'page'])
+    expect([...areasSeen].sort()).toEqual(['column', 'columnFrame', 'page'])
     // How far the drawn cursor moved in the single frame where its area switched
     const jumpsAtSwitches: number[] = []
     for (let i = 1; i < samples.length; i++) {

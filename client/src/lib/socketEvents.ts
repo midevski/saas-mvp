@@ -25,3 +25,13 @@ export const UNAUTHORIZED = 'unauthorized'
 export const CURSOR_MOVE = 'cursor:move'
 // Server -> others in the room: { userId, x, y }
 export const CURSOR_UPDATE = 'cursor:update'
+
+// Columns. Adding, renaming and deleting are shared; order and collapse are each viewer's own
+// layout, kept in this browser and never sent. Client -> server:
+export const COLUMN_CREATE = 'column:create' // { boardId, name }
+export const COLUMN_UPDATE = 'column:update' // { columnId, name }
+export const COLUMN_DELETE = 'column:delete' // { columnId, moveCardsTo? }
+// Server -> others in the room:
+export const COLUMN_CREATED = 'column:created' // { column }
+export const COLUMN_UPDATED = 'column:updated' // { column }
+export const COLUMN_DELETED = 'column:deleted' // { columnId, movedCards? | deletedCardIds? }
