@@ -75,6 +75,8 @@ h3 {
   letter-spacing: -0.02em;
   line-height: 1.1;
   text-wrap: balance;
+  /* User-provided titles (cards, orgs) can be one long unbroken word — wrap, don't overflow */
+  overflow-wrap: anywhere;
   color: var(--color-fg);
 }
 h1 {
@@ -1024,6 +1026,42 @@ code {
   color: var(--color-fg-muted);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  /* At most two lines on the card face, ending in "…"; the full text is in the card's details */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+/* Titles get the same two-line limit as descriptions */
+.board-card-title-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere; /* even one unbroken 200-character "word" wraps, then clamps */
+}
+.board-card-more {
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-accent-600);
+  cursor: pointer;
+}
+.board-card-more:hover {
+  text-decoration: underline;
+}
+/* Card details: the description box grows with its text instead of scrolling in a tiny box */
+.textarea-autosize {
+  max-height: 50vh;
+  overflow-y: auto;
+  resize: none;
 }
 .board-card-actions {
   display: flex;
@@ -1677,4 +1715,39 @@ code {
 }
 .checklist-item-text {
   font-size: 0.9375rem;
+}
+
+/* ---------- Password field with show/hide toggle ---------- */
+
+.password-field {
+  position: relative;
+}
+.password-field .input {
+  padding-right: 46px; /* room for the toggle */
+}
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--color-fg-faint);
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
+}
+.password-toggle:hover {
+  background: var(--color-paper-2);
+  color: var(--color-fg);
+}
+.password-toggle[aria-pressed='true'] {
+  color: var(--color-accent-600);
 }

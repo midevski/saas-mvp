@@ -1,4 +1,4 @@
-import { useState, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { checklistProgress, type CardData } from './boardState'
 
 // Custom drag type so the column only accepts board cards, not arbitrary dragged text
@@ -32,11 +32,34 @@ function ChecklistIcon() {
   )
 }
 
+// Whether a line-clamped element (see .board-card-title-text / .board-card-desc) is actually
+// cutting text off. Re-measured when the text changes and whenever the element resizes (the
+// card's width decides the wrapping).
+function useIsTruncated<T extends HTMLElement>(text: string | null) {
+  const ref = useRef<T>(null)
+  const [isTruncated, setIsTruncated] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    // Fires once on observe, then on every size change
+    const observer = new ResizeObserver(() => setIsTruncated(el.scrollHeight > el.clientHeight + 1))
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [text])
+
+  return [ref, text !== null && isTruncated] as const
+}
+
 export function Card({ card, dropBefore, onOpen, onDelete }: CardProps) {
   const [isDragging, setIsDragging] = useState(false)
   const cover = card.attachments[0]
   const checklist = checklistProgress(card.checklists)
   const classes = ['board-card', isDragging && 'dragging', dropBefore && 'drop-before'].filter(Boolean).join(' ')
+  // Long titles and descriptions each stop at two lines ("…"); one "View more" appears if
+  // either was actually cut off, and opens the card to read everything
+  const [titleRef, titleTruncated] = useIsTruncated<HTMLSpanElement>(card.title)
+  const [descRef, descTruncated] = useIsTruncated<HTMLParagraphElement>(card.description)
 
   // Buttons on the card do their own thing instead of also opening it
   const stop = (e: MouseEvent) => e.stopPropagation()
@@ -58,14 +81,35 @@ export function Card({ card, dropBefore, onOpen, onDelete }: CardProps) {
       <button
         type="button"
         className="board-card-title"
+        // Full title on hover when it's cut off
+        title={titleTruncated ? card.title : undefined}
         onClick={(e) => {
           stop(e)
           onOpen(card.id)
         }}
       >
-        {card.title}
+        {/* The clamp lives on an inner span: line-clamp is unreliable on buttons themselves */}
+        <span ref={titleRef} className="board-card-title-text">
+          {card.title}
+        </span>
       </button>
-      {card.description && <p className="board-card-desc">{card.description}</p>}
+      {card.description && (
+        <p ref={descRef} className="board-card-desc">
+          {card.description}
+        </p>
+      )}
+      {(titleTruncated || descTruncated) && (
+        <button
+          type="button"
+          className="board-card-more"
+          onClick={(e) => {
+            stop(e)
+            onOpen(card.id)
+          }}
+        >
+          View more
+        </button>
+      )}
       <div className="board-card-footer">
         {checklist.total > 0 && (
           <span

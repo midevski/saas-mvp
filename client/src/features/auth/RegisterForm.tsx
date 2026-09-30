@@ -4,6 +4,7 @@ import axios from 'axios'
 import { useAuth } from '../../context/AuthContext'
 import { sanitizeRedirect } from '../../lib/sanitizeRedirect'
 import { AuthLayout } from './AuthLayout'
+import { PasswordInput } from '../../components/PasswordInput'
 
 export function RegisterForm() {
   const { register } = useAuth()
@@ -65,19 +66,15 @@ export function RegisterForm() {
             onChange={(e) => setEmail(e.target.value)}
           />
         </label>
-        <label className="field">
-          <span className="field-label">Password</span>
-          <input
-            className="input"
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={8}
-            placeholder="At least 8 characters"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </label>
+        <PasswordInput
+          label="Password"
+          autoComplete="new-password"
+          required
+          minLength={8}
+          placeholder="At least 8 characters"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
         {error && (
           <p role="alert" className="alert">
             {error}

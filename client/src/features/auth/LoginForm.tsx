@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { useAuth } from '../../context/AuthContext'
 import { sanitizeRedirect } from '../../lib/sanitizeRedirect'
 import { AuthLayout } from './AuthLayout'
+import { PasswordInput } from '../../components/PasswordInput'
 
 export function LoginForm() {
   const { login } = useAuth()
@@ -49,17 +50,13 @@ export function LoginForm() {
             onChange={(e) => setEmail(e.target.value)}
           />
         </label>
-        <label className="field">
-          <span className="field-label">Password</span>
-          <input
-            className="input"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </label>
+        <PasswordInput
+          label="Password"
+          autoComplete="current-password"
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
         {error && (
           <p role="alert" className="alert">
             {error}

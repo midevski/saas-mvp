@@ -171,7 +171,7 @@ test('a copied invite link completes the accept flow in a fresh session', async 
   await page.getByRole('link', { name: 'Create one' }).click()
   await page.getByLabel('Name').fill('Nora Newcomer')
   await page.getByLabel('Email').fill(newcomerEmail)
-  await page.getByLabel('Password').fill('password123')
+  await page.getByLabel('Password', { exact: true }).fill('password123')
   await page.getByRole('button', { name: 'Create account' }).click()
 
   // Joined as the invited role, with the org selected

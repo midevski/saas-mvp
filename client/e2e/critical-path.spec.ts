@@ -14,7 +14,7 @@ const cardTitle = `Ship the demo ${runId}`
 async function fillRegisterForm(page: Page, user: typeof owner) {
   await page.getByLabel('Name').fill(user.name)
   await page.getByLabel('Email').fill(user.email)
-  await page.getByLabel('Password').fill(user.password)
+  await page.getByLabel('Password', { exact: true }).fill(user.password)
   await page.getByRole('button', { name: 'Create account' }).click()
 }
 

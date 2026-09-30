@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type DragEvent, type FormEvent } from 'react'
 import axios from 'axios'
 import { api } from '../../lib/api/axiosInstance'
 import { ACCEPTED_IMAGE_TYPES, validateImageFile } from '../../lib/imageUpload'
@@ -43,6 +43,7 @@ function uploadError(err: unknown, filename: string) {
 
 export function CardDetailView({ orgId, card, onClose, onSave, onCardChanged, onResync }: CardDetailViewProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
+  const descriptionRef = useRef<HTMLTextAreaElement>(null)
   const [title, setTitle] = useState(card.title)
   const [description, setDescription] = useState(card.description ?? '')
   const [saved, setSaved] = useState(false)
@@ -51,11 +52,22 @@ export function CardDetailView({ orgId, card, onClose, onSave, onCardChanged, on
   const [isDraggingOver, setIsDraggingOver] = useState(false)
   const [preview, setPreview] = useState<AttachmentData | null>(null)
   const [pendingDelete, setPendingDelete] = useState<AttachmentData | null>(null)
+  const [confirmingClose, setConfirmingClose] = useState(false)
 
   useEffect(() => {
     const dialog = dialogRef.current
     if (dialog && !dialog.open) dialog.showModal()
   }, [])
+
+  // The description box grows to fit its text (capped by CSS max-height), so a long
+  // description can actually be read here rather than in a tiny scrolling box
+  useLayoutEffect(() => {
+    const el = descriptionRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    const border = el.offsetHeight - el.clientHeight
+    el.style.height = `${el.scrollHeight + border}px`
+  }, [description])
 
   const attachmentsUrl = `/orgs/${orgId}/board/cards/${card.id}/attachments`
   const isDirty = title.trim() !== card.title || (description.trim() || null) !== card.description
@@ -67,6 +79,35 @@ export function CardDetailView({ orgId, card, onClose, onSave, onCardChanged, on
     onSave(card, trimmed, description.trim() || null)
     setSaved(true)
   }
+
+  // Closing with unsaved title/description edits asks first: save, discard, or keep editing
+  function requestClose() {
+    if (isDirty) setConfirmingClose(true)
+    else dialogRef.current?.close()
+  }
+
+  function saveAndClose() {
+    onSave(card, title.trim(), description.trim() || null)
+    dialogRef.current?.close()
+  }
+
+  function discardAndClose() {
+    setConfirmingClose(false)
+    dialogRef.current?.close()
+  }
+
+  // Reloading or closing the browser tab can't show our prompt — let the browser ask instead
+  useEffect(() => {
+    if (!isDirty) return
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [isDirty])
+
+  const changedFields = [
+    title.trim() !== card.title && 'title',
+    (description.trim() || null) !== card.description && 'description',
+  ].filter(Boolean)
 
   async function uploadFiles(files: File[]) {
     setErrors([])
@@ -123,17 +164,26 @@ export function CardDetailView({ orgId, card, onClose, onSave, onCardChanged, on
   }
 
   return (
-    <dialog ref={dialogRef} className="modal modal-wide" aria-labelledby="card-detail-title"
-      // The lightbox and delete confirmation are nested dialogs: React bubbles their onClose
-      // up to here, so only react to this dialog itself closing
+    <dialog
+      ref={dialogRef}
+      className="modal modal-wide"
+      aria-labelledby="card-detail-title"
+      // The lightbox and confirmations are nested dialogs: React bubbles their close/cancel
+      // events up to here, so only react to this dialog's own
       onClose={(e) => e.target === e.currentTarget && onClose()}
+      // Escape: with unsaved edits, ask instead of closing
+      onCancel={(e) => {
+        if (e.target !== e.currentTarget || !isDirty) return
+        e.preventDefault()
+        setConfirmingClose(true)
+      }}
     >
       <div className="card-header">
         <div className="card-title">
           <span className="eyebrow">Card</span>
           <h2 id="card-detail-title">{card.title}</h2>
         </div>
-        <button type="button" className="modal-close" aria-label="Close" onClick={() => dialogRef.current?.close()}>
+        <button type="button" className="modal-close" aria-label="Close" onClick={requestClose}>
           ×
         </button>
       </div>
@@ -156,7 +206,8 @@ export function CardDetailView({ orgId, card, onClose, onSave, onCardChanged, on
           <label className="field">
             <span className="field-label">Description</span>
             <textarea
-              className="textarea"
+              ref={descriptionRef}
+              className="textarea textarea-autosize"
               value={description}
               maxLength={5000}
               placeholder="Add more detail..."
@@ -260,6 +311,24 @@ export function CardDetailView({ orgId, card, onClose, onSave, onCardChanged, on
       </div>
 
       {preview && <Lightbox attachment={preview} onClose={() => setPreview(null)} />}
+
+      {confirmingClose && (
+        <ConfirmDialog
+          title="Save your changes?"
+          confirmLabel="Save changes"
+          // A card can't be saved without a title
+          confirmDisabled={!title.trim()}
+          cancelLabel="Keep editing"
+          extraAction={{ label: 'Discard changes', onClick: discardAndClose }}
+          onConfirm={saveAndClose}
+          onCancel={() => setConfirmingClose(false)}
+        >
+          <p>
+            You changed this card's {changedFields.join(' and ')} but haven't saved.
+            {!title.trim() && ' The title is empty, so these changes can only be discarded.'}
+          </p>
+        </ConfirmDialog>
+      )}
 
       {pendingDelete && (
         <ConfirmDialog

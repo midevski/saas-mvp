@@ -49,7 +49,7 @@ export async function addMember(
 export async function logIn(page: Page, user: TestUser) {
   await page.goto('/login')
   await page.getByLabel('Email').fill(user.email)
-  await page.getByLabel('Password').fill(user.password)
+  await page.getByLabel('Password', { exact: true }).fill(user.password)
   await page.getByRole('button', { name: 'Log in' }).click()
   await page.getByRole('button', { name: 'Account menu' }).waitFor()
 }

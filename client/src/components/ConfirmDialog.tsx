@@ -6,11 +6,24 @@ interface ConfirmDialogProps {
   confirmLabel: string
   onConfirm: () => Promise<void> | void
   onCancel: () => void
+  cancelLabel?: string
+  confirmDisabled?: boolean
+  // An optional third choice between Cancel and Confirm (e.g. "Discard changes")
+  extraAction?: { label: string; onClick: () => void }
 }
 
 // Render only while needed; it opens itself as a modal on mount.
 // Esc, the × button, Cancel and clicking outside all cancel — nothing happens until Confirm.
-export function ConfirmDialog({ title, children, confirmLabel, onConfirm, onCancel }: ConfirmDialogProps) {
+export function ConfirmDialog({
+  title,
+  children,
+  confirmLabel,
+  onConfirm,
+  onCancel,
+  cancelLabel = 'Cancel',
+  confirmDisabled = false,
+  extraAction,
+}: ConfirmDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [busy, setBusy] = useState(false)
 
@@ -32,7 +45,8 @@ export function ConfirmDialog({ title, children, confirmLabel, onConfirm, onCanc
     <dialog
       ref={dialogRef}
       className="modal"
-      style={{ width: 'min(28rem, calc(100vw - 32px))' }}
+      // Wider when there's a third button, so the actions fit on one row
+      style={{ width: `min(${extraAction ? 36 : 28}rem, calc(100vw - 32px))` }}
       aria-labelledby="confirm-dialog-title"
       // React bubbles onClose from nested dialogs; only react to this dialog closing itself
       onClose={(e) => e.target === e.currentTarget && onCancel()}
@@ -63,9 +77,14 @@ export function ConfirmDialog({ title, children, confirmLabel, onConfirm, onCanc
           disabled={busy}
           onClick={() => dialogRef.current?.close()}
         >
-          Cancel
+          {cancelLabel}
         </button>
-        <button type="button" className="btn btn-accent" disabled={busy} onClick={confirm}>
+        {extraAction && (
+          <button type="button" className="btn btn-danger" disabled={busy} onClick={extraAction.onClick}>
+            {extraAction.label}
+          </button>
+        )}
+        <button type="button" className="btn btn-accent" disabled={busy || confirmDisabled} onClick={confirm}>
           {busy ? 'Saving...' : confirmLabel}
         </button>
       </div>
