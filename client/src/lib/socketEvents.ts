@@ -17,6 +17,8 @@ export const CARD_DELETED = 'card:deleted'
 // { cardId, entry: ActivityEntry } — a new comment or system entry for a card's feed. Everyone on
 // the board gets it, the author included, so feeds de-duplicate by entry id.
 export const CARD_ACTIVITY = 'card:activity'
+// { cardId, activityId } — a comment was deleted; open feeds remove it
+export const CARD_ACTIVITY_DELETED = 'card:activityDeleted'
 // { onlineUserIds: string[] } — who has this org's board open right now
 export const PRESENCE_UPDATE = 'presence:update'
 

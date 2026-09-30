@@ -29,6 +29,7 @@ import {
   COLUMN_UPDATE,
   COLUMN_UPDATED,
   CARD_ACTIVITY,
+  CARD_ACTIVITY_DELETED,
 } from '../../realtime/events'
 import { Subscription } from '../billing/subscription.model'
 import { Card } from './card.model'
@@ -1288,8 +1289,22 @@ describe('card activity feed', () => {
     return { owner, member, orgId, card, boardId: state.board.id, todo: todo!, doing: doing!, done: done!, cardPath }
   }
 
-  const comment = (cardPath: string, token: string, text: unknown) =>
-    request(app).post(`${cardPath}/comments`).set(authed(token)).send({ text })
+  const comment = (cardPath: string, token: string, text: unknown, mentionedUserIds?: unknown) =>
+    request(app)
+      .post(`${cardPath}/comments`)
+      .set(authed(token))
+      .send(mentionedUserIds === undefined ? { text } : { text, mentionedUserIds })
+
+  const deleteComment = (cardPath: string, token: string, activityId: string) =>
+    request(app).delete(`${cardPath}/comments/${activityId}`).set(authed(token))
+
+  async function addAdmin(orgId: string, ownerToken: string, user: { accessToken: string; email: string }) {
+    const invite = await request(app)
+      .post(`/orgs/${orgId}/invites`)
+      .set(authed(ownerToken))
+      .send({ email: user.email, role: 'admin' })
+    await request(app).post(`/invites/${invite.body.inviteToken}/accept`).set(authed(user.accessToken))
+  }
 
   async function feed(cardId: string) {
     return (await activityService.listActivity(cardId)).map((e) => ({
@@ -1325,50 +1340,116 @@ describe('card activity feed', () => {
       ])
     })
 
-    it('parses @mentions against real org members only — no typos, no outsiders, no emails, no partial names', async () => {
-      const { owner, member, orgId, cardPath } = await setupCard()
-      const sam = await registerNamed('Sam', 'sam@example.com')
-      const samLee = await registerNamed('Sam Lee', 'samlee@example.com')
-      await addMember(orgId, owner.accessToken, sam)
-      await addMember(orgId, owner.accessToken, samLee)
-      await registerNamed('Olivia Outsider', 'olivia@example.com') // not in the org
+    it('stores the mentions the client picked, keeping only real org members (spoofed ids are dropped)', async () => {
+      const { owner, member, card, cardPath } = await setupCard()
+      const outsider = await registerNamed('Olivia Outsider', 'olivia@example.com') // not in the org
+      const nobody = new mongoose.Types.ObjectId().toString() // not even a user
 
-      const res = await comment(
-        cardPath,
-        owner.accessToken,
-        'Hey @sarah connor and @Sam Lee! cc @Sam, @Olivia Outsider, @Sarahh, @Samuel, mail me@Sam.com',
-      )
+      const res = await comment(cardPath, owner.accessToken, 'Hey @Sarah Connor, and hi Olivia', [
+        member.userId,
+        outsider.userId,
+        nobody,
+        owner.userId,
+      ])
       expect(res.status).toBe(201)
       expect(res.body.entry.mentions).toEqual([
-        { id: member.userId, name: 'Sarah Connor' }, // case-insensitive
-        { id: samLee.userId, name: 'Sam Lee' }, // the longest matching name wins
-        { id: sam.userId, name: 'Sam' },
+        { id: member.userId, name: 'Sarah Connor' },
+        { id: owner.userId, name: 'Olga Owner' },
       ])
-    })
-
-    it('stores each mentioned user once, even if mentioned repeatedly', async () => {
-      const { owner, member, card, cardPath } = await setupCard()
-      await comment(cardPath, owner.accessToken, '@Sarah Connor, @Sarah Connor — ping @SARAH CONNOR')
       const stored = await Card.findById(card.id).select('+activity')
-      const last = stored!.activity[stored!.activity.length - 1]!
-      expect(last.mentions.map(String)).toEqual([member.userId])
+      expect(stored!.activity.at(-1)!.mentions.map(String)).toEqual([member.userId, owner.userId])
     })
 
-    it('validates the text', async () => {
+    it('never guesses mentions from the text — only picked ids count', async () => {
       const { owner, cardPath } = await setupCard()
+      const res = await comment(cardPath, owner.accessToken, 'Typed by hand: @Sarah Connor')
+      expect(res.body.entry.mentions).toEqual([])
+    })
+
+    it('stores each mentioned user once, even if sent repeatedly', async () => {
+      const { owner, member, card, cardPath } = await setupCard()
+      await comment(cardPath, owner.accessToken, '@Sarah Connor @Sarah Connor', [member.userId, member.userId])
+      const stored = await Card.findById(card.id).select('+activity')
+      expect(stored!.activity.at(-1)!.mentions.map(String)).toEqual([member.userId])
+    })
+
+    it('validates the text and the mention ids', async () => {
+      const { owner, member, cardPath } = await setupCard()
       for (const text of [undefined, '', '   ', 42, 'x'.repeat(2001)]) {
         expect((await comment(cardPath, owner.accessToken, text)).status).toBe(400)
       }
-      expect((await comment(cardPath, owner.accessToken, 'x'.repeat(2000))).status).toBe(201)
+      for (const ids of ['not-an-array', ['not-an-id'], [42]]) {
+        expect((await comment(cardPath, owner.accessToken, 'hi', ids)).status).toBe(400)
+      }
+      expect((await comment(cardPath, owner.accessToken, 'x'.repeat(2000), [member.userId])).status).toBe(201)
     })
 
-    it('is append-only: there is no way to edit or delete a comment', async () => {
+    it('has no way to edit a comment', async () => {
       const { owner, cardPath } = await setupCard()
-      const { entry } = (await comment(cardPath, owner.accessToken, 'Permanent')).body
+      const { entry } = (await comment(cardPath, owner.accessToken, 'Final')).body
       const as = authed(owner.accessToken)
       expect((await request(app).patch(`${cardPath}/comments/${entry.id}`).set(as).send({ text: 'x' })).status).toBe(404)
-      expect((await request(app).delete(`${cardPath}/comments/${entry.id}`).set(as)).status).toBe(404)
-      expect((await request(app).put(`${cardPath}/comments`).set(as).send({ text: 'x' })).status).toBe(404)
+      expect((await request(app).put(`${cardPath}/comments/${entry.id}`).set(as).send({ text: 'x' })).status).toBe(404)
+    })
+  })
+
+  describe('deleting comments', () => {
+    async function setupWithAdmin() {
+      const setup = await setupCard()
+      const admin = await registerNamed('Ada Admin', 'ada@example.com')
+      await addAdmin(setup.orgId, setup.owner.accessToken, admin)
+      const other = await registerNamed('Mo Member', 'mo@example.com')
+      await addMember(setup.orgId, setup.owner.accessToken, other)
+      return { ...setup, admin, other }
+    }
+
+    const texts = async (cardId: string) => (await feed(cardId)).map((e) => e.text)
+
+    it("the author can delete their own comment, and it's gone outright (no tombstone)", async () => {
+      const { member, card, cardPath } = await setupWithAdmin()
+      const { entry } = (await comment(cardPath, member.accessToken, 'Oops, wrong card')).body
+      await comment(cardPath, member.accessToken, 'Keep me')
+
+      expect((await deleteComment(cardPath, member.accessToken, entry.id)).status).toBe(204)
+      expect(await texts(card.id)).toEqual(['created this card', 'Keep me'])
+      expect((await deleteComment(cardPath, member.accessToken, entry.id)).status).toBe(404) // already gone
+    })
+
+    it("owners and admins can delete anyone's comment (moderation)", async () => {
+      const { owner, admin, member, card, cardPath } = await setupWithAdmin()
+      const first = (await comment(cardPath, member.accessToken, 'Rude remark')).body.entry
+      const second = (await comment(cardPath, member.accessToken, 'Another one')).body.entry
+      expect((await deleteComment(cardPath, admin.accessToken, first.id)).status).toBe(204)
+      expect((await deleteComment(cardPath, owner.accessToken, second.id)).status).toBe(204)
+      expect(await texts(card.id)).toEqual(['created this card'])
+    })
+
+    it("a plain member can't delete someone else's comment (403)", async () => {
+      const { member, other, owner, card, cardPath } = await setupWithAdmin()
+      const byMember = (await comment(cardPath, member.accessToken, 'Mine')).body.entry
+      const byOwner = (await comment(cardPath, owner.accessToken, 'Boss')).body.entry
+      expect((await deleteComment(cardPath, other.accessToken, byMember.id)).status).toBe(403)
+      expect((await deleteComment(cardPath, member.accessToken, byOwner.id)).status).toBe(403)
+      expect(await texts(card.id)).toEqual(['created this card', 'Mine', 'Boss'])
+    })
+
+    it('nobody can delete a system entry — not even the owner who triggered it', async () => {
+      const { owner, card, cardPath } = await setupWithAdmin()
+      const created = (await activityService.listActivity(card.id))[0]!
+      expect(created.type).toBe('system')
+      const res = await deleteComment(cardPath, owner.accessToken, created.id)
+      expect(res.status).toBe(403)
+      expect(await texts(card.id)).toEqual(['created this card'])
+    })
+
+    it("404s for unknown or malformed ids, and for another card's comment", async () => {
+      const { owner, boardId, todo, card, cardPath } = await setupWithAdmin()
+      const elsewhere = await boardService.createCard(boardId, todo.id, 'Other', owner.userId)
+      const theirs = (await comment(`${cardPath.replace(card.id, elsewhere.id)}`, owner.accessToken, 'There')).body.entry
+      expect((await deleteComment(cardPath, owner.accessToken, theirs.id)).status).toBe(404)
+      expect((await deleteComment(cardPath, owner.accessToken, new mongoose.Types.ObjectId().toString())).status).toBe(404)
+      expect((await deleteComment(cardPath, owner.accessToken, 'nope')).status).toBe(404)
+      expect(await texts(elsewhere.id)).toEqual(['created this card', 'There'])
     })
 
     it('never ships the feed with the board or card broadcasts', async () => {
@@ -1491,13 +1572,23 @@ describe('card activity feed', () => {
         .post(`${cardPath}/comments`)
         .set(authed(member.accessToken))
         .set('X-Socket-Id', poster.id!)
-        .send({ text: 'Ping @Olga Owner' })
+        .send({ text: 'Ping @Olga Owner', mentionedUserIds: [owner.userId] })
 
       const expected = { cardId: card.id, entry: res.body.entry }
       expect(await viewerGets).toEqual(expected)
       expect(await posterGets).toEqual(expected) // their other tabs need it too; clients de-dupe by id
       expect(res.body.entry.mentions).toEqual([{ id: owner.userId, name: 'Olga Owner' }])
       await strangerDoesNot
+
+      // Deleting it tells every open feed to drop it
+      const viewerRemoves = nextEvent(viewer, CARD_ACTIVITY_DELETED)
+      const posterRemoves = nextEvent(poster, CARD_ACTIVITY_DELETED)
+      const strangerNotTold = expectNoEvent(stranger, CARD_ACTIVITY_DELETED)
+      expect((await deleteComment(cardPath, member.accessToken, res.body.entry.id)).status).toBe(204)
+      const removed = { cardId: card.id, activityId: res.body.entry.id }
+      expect(await viewerRemoves).toEqual(removed)
+      expect(await posterRemoves).toEqual(removed)
+      await strangerNotTold
 
       // System entries travel the same way, alongside (not instead of) the change's own event
       const moved = nextEvent(viewer, CARD_MOVED)
@@ -1513,34 +1604,46 @@ describe('card activity feed', () => {
   })
 
   describe('permissions match every other card mutation', () => {
+    // A comment to try deleting, by the org's member
+    async function withComment() {
+      const setup = await setupCard()
+      const { entry } = (await comment(setup.cardPath, setup.member.accessToken, 'Target')).body
+      return { ...setup, commentId: entry.id as string }
+    }
+
     it('rejects unauthenticated requests', async () => {
-      const { cardPath } = await setupCard()
+      const { cardPath, commentId } = await withComment()
       expect((await request(app).post(`${cardPath}/comments`).send({ text: 'hi' })).status).toBe(401)
       expect((await request(app).get(`${cardPath}/activity`)).status).toBe(401)
+      expect((await request(app).delete(`${cardPath}/comments/${commentId}`)).status).toBe(401)
     })
 
     it('rejects non-members with 404', async () => {
-      const { card, cardPath } = await setupCard()
+      const { card, cardPath, commentId } = await withComment()
       const outsider = await registerUser('outsider@example.com')
       expect((await comment(cardPath, outsider.accessToken, 'hi')).status).toBe(404)
       expect((await request(app).get(`${cardPath}/activity`).set(authed(outsider.accessToken))).status).toBe(404)
-      expect(await feed(card.id)).toHaveLength(1)
+      expect((await deleteComment(cardPath, outsider.accessToken, commentId)).status).toBe(404)
+      expect(await feed(card.id)).toHaveLength(2)
     })
 
     it('rejects unsubscribed orgs with 402', async () => {
-      const { owner, orgId, cardPath } = await setupCard()
+      const { owner, member, orgId, cardPath, commentId } = await withComment()
       await Subscription.updateOne({ orgId }, { status: 'canceled' })
       expect((await comment(cardPath, owner.accessToken, 'hi')).status).toBe(402)
       expect((await request(app).get(`${cardPath}/activity`).set(authed(owner.accessToken))).status).toBe(402)
+      expect((await deleteComment(cardPath, member.accessToken, commentId)).status).toBe(402)
     })
 
     it("rejects reaching another org's card through your own org's route", async () => {
-      const { card } = await setupCard()
+      const { card, commentId } = await withComment()
       const attacker = await setupSubscribedOrgFor('attacker@example.com')
       const via = `/orgs/${attacker.orgId}/board/cards/${card.id}`
+      // The attacker is the owner of *their* org — that role must not carry over to this card
       expect((await comment(via, attacker.owner.accessToken, 'hi')).status).toBe(404)
       expect((await request(app).get(`${via}/activity`).set(authed(attacker.owner.accessToken))).status).toBe(404)
-      expect(await feed(card.id)).toHaveLength(1)
+      expect((await deleteComment(via, attacker.owner.accessToken, commentId)).status).toBe(404)
+      expect(await feed(card.id)).toHaveLength(2)
     })
   })
 })

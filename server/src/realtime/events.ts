@@ -18,6 +18,8 @@ export const CARD_DELETED = 'card:deleted'
 // whole room, sender included (clients de-duplicate by entry id). Sent alongside, not instead
 // of, the card:updated/card:moved event for the change itself.
 export const CARD_ACTIVITY = 'card:activity'
+// { cardId, activityId } — a comment was deleted; every open feed removes it
+export const CARD_ACTIVITY_DELETED = 'card:activityDeleted'
 // Columns. Adding, renaming and deleting are shared; ordering and collapsing are each viewer's
 // own layout (stored in their browser) and are never sent. Client -> server:
 export const COLUMN_CREATE = 'column:create' // { boardId, name }

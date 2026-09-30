@@ -6,9 +6,10 @@ export interface MentionRange {
   end: number
 }
 
-// Mirrors findMentions in server/src/modules/board/activity.service.ts, which decides who was
-// mentioned when a comment is posted. Here it's only used to find where those stored mentions
-// sit in the text, so they can be highlighted — it never adds a mention the server didn't store.
+// Finds where `@Name` for each of the given people appears in the text. It never decides *who*
+// is mentioned — that's only ever the people explicitly picked in the mention dropdown (and, for
+// a posted comment, the ids the server stored). It's used to locate those picks: to highlight
+// them in a posted comment, and to drop a pick whose "@Name" was deleted before posting.
 // Whole names only, case-insensitive; an '@' must start a word; the longest name wins.
 export function findMentions(text: string, people: { id: string; name: string }[]): MentionRange[] {
   const candidates = people

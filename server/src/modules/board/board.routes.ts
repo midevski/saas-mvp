@@ -44,8 +44,9 @@ boardRouter.post(`${checklists}/:checklistId/items`, ...boardAccess, checklistCo
 boardRouter.patch(`${checklists}/:checklistId/items/:itemId`, ...boardAccess, checklistController.updateItemHandler)
 boardRouter.delete(`${checklists}/:checklistId/items/:itemId`, ...boardAccess, checklistController.deleteItemHandler)
 
-// Activity feed: comments are a card mutation like any other, so the same gate. Append-only —
-// there's deliberately no edit or delete route for comments yet.
+// Activity feed: comments are a card mutation like any other, so the same gate. Deleting a
+// comment additionally needs its author or an owner/admin (checked in the service). No editing.
 const activity = '/orgs/:orgId/board/cards/:cardId'
 boardRouter.get(`${activity}/activity`, ...boardAccess, activityController.listActivityHandler)
 boardRouter.post(`${activity}/comments`, ...boardAccess, activityController.addCommentHandler)
+boardRouter.delete(`${activity}/comments/:activityId`, ...boardAccess, activityController.deleteCommentHandler)

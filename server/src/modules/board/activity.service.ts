@@ -1,6 +1,7 @@
 import { Types } from 'mongoose'
-import { NotFoundError } from '../../lib/errors'
-import { CARD_ACTIVITY } from '../../realtime/events'
+import { ForbiddenError, NotFoundError } from '../../lib/errors'
+import { CARD_ACTIVITY, CARD_ACTIVITY_DELETED } from '../../realtime/events'
+import { Membership, type MembershipRole } from '../orgs/membership.model'
 import { emitToOrg } from '../../realtime/emitter'
 import { User } from '../users/user.model'
 import { Card, type ActivityEntryDocument, type ActivityType } from './card.model'
@@ -47,38 +48,16 @@ export function quote(text: string, max = 80) {
   return `'${oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine}'`
 }
 
-const WORD_CHAR = /[\p{L}\p{N}_]/u
-
-// Finds `@Display Name` mentions of the given people. Case-insensitive, whole names only: an
-// '@' must start a word (so "me@example.com" isn't a mention) and the name must end at a word
-// boundary (so "@Sam" doesn't match inside "@Samuel"). The longest name wins when several fit
-// ("@Sam Lee" over "@Sam"). A typo or a non-member's name simply doesn't match.
-// Mirrored in client/src/lib/mentions.ts, which uses it to highlight stored mentions.
-export function findMentions(text: string, people: { id: string; name: string }[]) {
-  const candidates = people
-    .map((p) => ({ id: p.id, name: p.name.trim() }))
-    .filter((p) => p.name.length > 0)
-    .sort((a, b) => b.name.length - a.name.length)
-
-  const found: { id: string; start: number; end: number }[] = []
-  let at = text.indexOf('@')
-  while (at !== -1) {
-    let next = at + 1
-    if (at === 0 || !WORD_CHAR.test(text[at - 1]!)) {
-      const match = candidates.find((c) => {
-        const end = at + 1 + c.name.length
-        return (
-          text.slice(at + 1, end).toLowerCase() === c.name.toLowerCase() && !WORD_CHAR.test(text[end] ?? '')
-        )
-      })
-      if (match) {
-        next = at + 1 + match.name.length
-        found.push({ id: match.id, start: at, end: next })
-      }
-    }
-    at = text.indexOf('@', next)
-  }
-  return found
+// Mentions arrive as explicit user ids from the client's mention picker — never guessed from the
+// text. They're only trusted as far as this: every id must be a current member of the org.
+// Anything else (a spoofed id, someone who left) is dropped, so nobody outside the org can ever
+// be "mentioned" (and, from Phase 14, notified).
+export async function keepOrgMembers(orgId: string, userIds: string[]): Promise<string[]> {
+  const unique = [...new Set(userIds)]
+  if (unique.length === 0) return []
+  const members = await Membership.find({ orgId, userId: { $in: unique } }).select('userId')
+  const memberIds = new Set(members.map((m) => m.userId.toString()))
+  return unique.filter((id) => memberIds.has(id)) // keeps the order they were picked in
 }
 
 export async function toActivityDTOs(entries: ActivityEntryDocument[]): Promise<ActivityDTO[]> {
@@ -108,7 +87,7 @@ export async function listActivity(cardId: string): Promise<ActivityDTO[]> {
   return toActivityDTOs(card.activity ?? [])
 }
 
-// Append-only on purpose: there is no edit or delete for comments (yet)
+// No editing (delete and repost instead)
 export async function addComment(
   cardId: string,
   userId: string,
@@ -119,6 +98,38 @@ export async function addComment(
   const updated = await Card.updateOne({ _id: cardId }, { $push: { activity: entry } })
   if (updated.matchedCount === 0) throw new NotFoundError('Card not found')
   return entry
+}
+
+// Comments can be deleted by their author, or by an owner/admin (moderation). System entries
+// can't be deleted at all: they're the record of what happened, not anyone's own words.
+// Hard delete — the entry is removed from the feed outright.
+export async function deleteComment(
+  cardId: string,
+  activityId: string,
+  userId: string,
+  role: MembershipRole,
+): Promise<void> {
+  const card = await Card.findOne({ _id: cardId, 'activity._id': activityId }, { 'activity.$': 1 })
+  const entry = card?.activity?.[0]
+  if (!entry) {
+    if (!(await Card.exists({ _id: cardId }))) throw new NotFoundError('Card not found')
+    throw new NotFoundError('Comment not found')
+  }
+  if (entry.type !== 'comment') throw new ForbiddenError("Activity entries can't be deleted — only comments can")
+  const isAuthor = entry.authorId?.toString() === userId
+  if (!isAuthor && role !== 'owner' && role !== 'admin') {
+    throw new ForbiddenError('Only the author, an admin or the owner can delete this comment')
+  }
+  // The type filter makes the "comments only" rule hold at the write itself, too
+  const result = await Card.updateOne(
+    { _id: cardId },
+    { $pull: { activity: { _id: new Types.ObjectId(activityId), type: 'comment' } } },
+  )
+  if (result.modifiedCount === 0) throw new NotFoundError('Comment not found') // deleted meanwhile
+}
+
+export function publishActivityDeleted(orgId: string, cardId: string, activityId: string) {
+  emitToOrg(orgId, CARD_ACTIVITY_DELETED, { cardId, activityId })
 }
 
 // Tells everyone on the board — including whoever triggered it; clients de-duplicate by id.
