@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../../lib/api/axiosInstance'
 import { useSocket } from '../../context/SocketContext'
 import { useOrg } from '../../context/OrgContext'
+import { useShell } from '../../context/ShellContext'
 import { PageHeader } from '../../components/PageHeader'
-import { InviteButton } from '../dashboard/InviteButton'
 import { PresenceProvider } from '../../context/PresenceContext'
 import { PresenceAvatars } from './PresenceAvatars'
-import { CursorLayer, LiveCursorsProvider } from './CursorLayer'
+import { CursorOverlay, LiveCursorsProvider } from './CursorLayer'
 import { CardDetailView } from './CardDetailView'
 import {
   BOARD_JOIN,
@@ -47,11 +48,7 @@ export function BoardPage() {
   // Checked before attempting board:join — the server would reject it too, but don't rely on that
   return (
     <>
-      <PageHeader
-        eyebrow="Realtime board"
-        title="Collaborative board"
-        actions={<InviteButton orgId={orgId} />}
-      />
+      <PageHeader eyebrow="Realtime board" title="Collaborative board" />
       <section className="card-ink" style={{ maxWidth: '44rem' }}>
         <div className="blueprint-ink" />
         <div className="glow" style={{ top: '-10rem', right: '-10rem' }} />
@@ -76,6 +73,7 @@ export function BoardPage() {
 function LiveBoard({ orgId }: { orgId: string }) {
   const { socket, isConnected } = useSocket()
   const { orgs } = useOrg()
+  const { headerSlot } = useShell()
   const [state, dispatch] = useReducer(boardReducer, null)
   const [error, setError] = useState<string | null>(null)
   // Live cursor anchors: the page container, the board's scroll viewport, the board's content
@@ -185,16 +183,15 @@ function LiveBoard({ orgId }: { orgId: string }) {
           title={orgs.find((o) => o.id === orgId)?.name ?? state.board.name}
           lede="Drag cards between columns. Changes appear instantly for everyone on this board."
           actions={
-            <>
-              <PresenceAvatars />
-              <span className={isConnected ? 'pill pill-success' : 'pill'}>
-                <span className={isConnected ? 'dot dot-live' : 'dot dot-off'} />
-                {isConnected ? 'Live' : 'Reconnecting...'}
-              </span>
-              <InviteButton orgId={orgId} />
-            </>
+            <span className={isConnected ? 'pill pill-success' : 'pill'}>
+              <span className={isConnected ? 'dot dot-live' : 'dot dot-off'} />
+              {isConnected ? 'Live' : 'Reconnecting...'}
+            </span>
           }
         />
+        {/* Who's viewing this board lives in the navbar; a portal keeps it inside this board's
+            presence data */}
+        {headerSlot && createPortal(<PresenceAvatars />, headerSlot)}
         {error && (
           <p role="alert" className="alert" style={{ marginBottom: 16 }}>
             {error}
@@ -213,10 +210,9 @@ function LiveBoard({ orgId }: { orgId: string }) {
                 onDelete={deleteCard}
               />
             ))}
-            <CursorLayer area="board" />
           </div>
         </div>
-        <CursorLayer area="page" />
+        <CursorOverlay />
       </div>
       {openCard && (
         <CardDetailView

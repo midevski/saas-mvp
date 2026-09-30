@@ -598,11 +598,89 @@ code {
   height: 20px;
   background: var(--color-line);
 }
-.user-email {
+/* Where the board page puts who's viewing it (empty, and takes no space, elsewhere) */
+.header-slot {
+  display: flex;
+  align-items: center;
+}
+.header-slot:empty {
   display: none;
+}
+
+/* Account menu: avatar button + dropdown */
+.user-menu {
+  position: relative;
+}
+.user-menu-button {
+  display: grid;
+  place-items: center;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.user-menu-button:hover,
+.user-menu-button[aria-expanded='true'] {
+  border-color: var(--color-line-strong);
+  box-shadow: 0 0 0 3px var(--color-paper-2);
+}
+.user-menu-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: min(260px, calc(100vw - 32px));
+  padding: 6px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-paper);
+  box-shadow: var(--shadow-lift);
+  animation: modal-in 0.2s var(--ease-out-expo);
+}
+.user-menu-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--color-line);
+}
+.user-menu-name {
+  font-weight: 600;
+  font-size: 0.9375rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-menu-email {
   font-family: var(--font-mono);
   font-size: 0.75rem;
   color: var(--color-fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--color-fg);
+  font: inherit;
+  font-size: 0.875rem;
+  text-align: left;
+  cursor: pointer;
+}
+.user-menu-item:hover,
+.user-menu-item:focus-visible {
+  background: var(--color-paper-2);
+  outline: none;
 }
 
 @media (min-width: 900px) {
@@ -610,8 +688,7 @@ code {
     order: 0;
     width: auto;
   }
-  .header-divider,
-  .user-email {
+  .header-divider {
     display: block;
   }
 }
@@ -745,22 +822,22 @@ code {
 
 /* ---------- Live cursors ---------- */
 
-.cursor-layer {
+/* One overlay over the whole board page, above the sticky top bar (z-index 50). Each remote
+   cursor is a single element in it, positioned by CursorOverlay. */
+.cursor-overlay {
   position: absolute;
   inset: 0;
-  z-index: 20;
-  overflow: hidden;
-  pointer-events: none;
-}
-/* Board cursors are clipped to the board; page cursors float over the whole page, including
-   the margins and the sticky top bar (z-index 50) */
-.cursor-layer-page {
   z-index: 60;
   overflow: visible;
+  pointer-events: none;
 }
-/* Anchor for 'page' cursor coordinates */
+/* Anchor for 'page' cursor coordinates and the overlay */
 .board-page {
   position: relative;
+}
+/* Pointing at something this viewer can't see (e.g. a card scrolled out of their list) */
+.remote-cursor.is-offscreen {
+  opacity: 0;
 }
 .remote-cursor {
   position: absolute;

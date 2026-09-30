@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../lib/api/axiosInstance'
 import { relativeTime } from '../../lib/relativeTime'
 import { useOrg } from '../../context/OrgContext'
+import { useShell } from '../../context/ShellContext'
 import { CopyButton } from '../../components/CopyButton'
 
 interface PendingInvite {
@@ -18,9 +19,10 @@ interface LoadedInvites {
   invites: PendingInvite[] | null
 }
 
-// `refreshKey` changes whenever a new invite is created, so the list refetches
-export function PendingInvites({ refreshKey }: { refreshKey: number }) {
+export function PendingInvites() {
   const { currentOrg, currentRole } = useOrg()
+  // Changes whenever an invite is created (from the navbar), so the list refetches
+  const { invitesVersion: refreshKey } = useShell()
   const canManage = currentRole === 'owner' || currentRole === 'admin'
   const orgId = currentOrg?.id
   const key = `${orgId}:${refreshKey}`

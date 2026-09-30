@@ -6,10 +6,11 @@ interface InviteButtonProps {
   // Org-scoped pages (e.g. the board) pass the org from the URL; otherwise the selected org is used
   orgId?: string
   onInvited?: () => void
+  compact?: boolean // navbar size
 }
 
 // Mirrors the server rule (owner/admin only) for a clean UX — the server is the real enforcement point
-export function InviteButton({ orgId, onInvited }: InviteButtonProps) {
+export function InviteButton({ orgId, onInvited, compact = false }: InviteButtonProps) {
   const { orgs, currentOrg } = useOrg()
   const [isOpen, setIsOpen] = useState(false)
 
@@ -18,7 +19,7 @@ export function InviteButton({ orgId, onInvited }: InviteButtonProps) {
 
   return (
     <>
-      <button type="button" className="btn btn-accent" onClick={() => setIsOpen(true)}>
+      <button type="button" className={compact ? 'btn btn-accent btn-sm' : 'btn btn-accent'} onClick={() => setIsOpen(true)}>
         <span aria-hidden="true">+</span> Invite
       </button>
       {isOpen && (

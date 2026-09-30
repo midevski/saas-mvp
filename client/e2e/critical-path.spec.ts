@@ -41,7 +41,13 @@ test('signup -> org -> invite -> subscribe -> realtime board across two users', 
     await a.goto('/register')
     await fillRegisterForm(a, owner)
     await expect(a.getByRole('heading', { name: `Welcome, ${owner.name}` })).toBeVisible()
-    await expect(a.getByRole('button', { name: 'Log out' })).toBeVisible()
+    // Signed in: the account menu shows who you are and offers Log out
+    await a.getByRole('button', { name: 'Account menu' }).click()
+    const menu = a.getByRole('menu', { name: 'Account' })
+    await expect(menu).toContainText(owner.email)
+    await expect(menu.getByRole('menuitem', { name: 'Log out' })).toBeVisible()
+    await a.keyboard.press('Escape')
+    await expect(menu).toHaveCount(0)
   })
 
   await test.step('owner creates an org', async () => {

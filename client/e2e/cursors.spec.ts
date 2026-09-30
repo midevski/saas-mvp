@@ -125,6 +125,45 @@ test('live cursors: labeled, aligned across window sizes and scroll, throttled, 
     await expectCursorOver(pageB, owner, await centerOf(pageB, 'Done'))
   })
 
+  await test.step('crossing between the page, the board and a card list stays smooth (no jump)', async () => {
+    // Regression: cursors used to be re-created when switching coordinate areas, which made
+    // them snap 60-350px in one frame right at the card-list edge
+    await pageB.locator('.board').evaluate((el) => (el.scrollLeft = 0))
+    const list = (await column(pageA, 'To Do').locator('.board-column-body').boundingBox())!
+    const x = list.x + 120
+    await pageA.mouse.move(x, list.y - 180)
+    await expect(cursorOf(pageB, owner)).toHaveAttribute('data-cursor-area', 'page')
+
+    await pageB.evaluate(() => {
+      const w = window as unknown as { __samples: { y: number; area: string }[] }
+      w.__samples = []
+      const loop = () => {
+        const el = document.querySelector<HTMLElement>('[data-cursor-user="Olga Owner"]')
+        if (el) w.__samples.push({ y: el.getBoundingClientRect().top, area: el.dataset.cursorArea ?? '' })
+        if (w.__samples.length < 600) requestAnimationFrame(loop)
+      }
+      requestAnimationFrame(loop)
+    })
+    for (let i = 0; i < 2; i++) {
+      await pageA.mouse.move(x, list.y + 60, { steps: 60 })
+      await pageA.mouse.move(x, list.y - 180, { steps: 60 })
+    }
+    await pageA.waitForTimeout(200)
+
+    const samples = await pageB.evaluate(
+      () => (window as unknown as { __samples: { y: number; area: string }[] }).__samples,
+    )
+    const areasSeen = new Set(samples.map((s) => s.area))
+    expect([...areasSeen].sort()).toEqual(['board', 'column', 'page'])
+    // How far the drawn cursor moved in the single frame where its area switched
+    const jumpsAtSwitches: number[] = []
+    for (let i = 1; i < samples.length; i++) {
+      if (samples[i]!.area !== samples[i - 1]!.area) jumpsAtSwitches.push(Math.abs(samples[i]!.y - samples[i - 1]!.y))
+    }
+    expect(jumpsAtSwitches.length).toBeGreaterThan(0)
+    expect(Math.max(...jumpsAtSwitches)).toBeLessThanOrEqual(25)
+  })
+
   await test.step('movement is interpolated, not teleported', async () => {
     const transition = await cursorOf(pageB, owner).evaluate((el) => getComputedStyle(el).transition)
     expect(transition).toContain('transform 0.1s')

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type DragEvent } from 'react'
 import type { CardData, ColumnData } from './boardState'
 import { Card, CARD_DRAG_TYPE } from './Card'
 import { CreateCardForm } from './CreateCardForm'
-import { CursorLayer } from './CursorLayer'
 
 interface ColumnProps {
   column: ColumnData
@@ -114,7 +113,6 @@ export function Column({ column, cards, onCreate, onMove, onOpen, onDelete }: Co
                 No cards yet
               </p>
             )}
-            <CursorLayer area="column" columnId={column.id} />
           </div>
         </div>
       </div>

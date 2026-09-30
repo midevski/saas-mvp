@@ -1,4 +1,14 @@
-import { createContext, useContext, useEffect, useState, type ReactNode, type RefObject } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { usePresence } from '../../context/PresenceContext'
 import { useSocket } from '../../context/SocketContext'
@@ -33,7 +43,14 @@ interface RemoteCursor extends CursorPosition {
   at: number
 }
 
-const CursorsContext = createContext<Record<string, RemoteCursor>>({})
+interface CursorsContextValue {
+  cursors: Record<string, RemoteCursor>
+  pageRef: RefObject<HTMLDivElement | null>
+  boardRef: RefObject<HTMLDivElement | null>
+  trackRef: RefObject<HTMLDivElement | null>
+}
+
+const CursorsContext = createContext<CursorsContextValue | null>(null)
 
 interface LiveCursorsProviderProps {
   orgId: string
@@ -44,7 +61,7 @@ interface LiveCursorsProviderProps {
 }
 
 // Tracks my pointer anywhere on the board page and receives everyone else's.
-// Render <CursorLayer area="page"> and <CursorLayer area="board"> inside it.
+// Render one <CursorOverlay /> inside the page container.
 export function LiveCursorsProvider({ orgId, pageRef, boardRef, trackRef, children }: LiveCursorsProviderProps) {
   const { socket } = useSocket()
   const { user } = useAuth()
@@ -142,16 +159,62 @@ export function LiveCursorsProvider({ orgId, pageRef, boardRef, trackRef, childr
     }
   }, [socket, myId])
 
-  return <CursorsContext.Provider value={cursors}>{children}</CursorsContext.Provider>
+  return (
+    <CursorsContext.Provider value={{ cursors, pageRef, boardRef, trackRef }}>{children}</CursorsContext.Provider>
+  )
 }
 
-// Draws the cursors currently in one area. pointer-events: none — never blocks the page.
-// The browser moves each layer with its own content, so scrolling needs no recalculation.
-// `columnId` is required for area="column": that layer lives inside the column's list content
-export function CursorLayer({ area, columnId }: { area: CursorArea; columnId?: string }) {
-  const cursors = useContext(CursorsContext)
+interface Placement {
+  x: number
+  y: number
+  visible: boolean
+}
+
+function within(rect: DOMRect, x: number, y: number) {
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+}
+
+// Converts a received position (in whichever anchor space it was sent) into a position inside
+// the page container, and whether that spot is actually visible on *this* screen — e.g. a card
+// in a part of a list this viewer has scrolled out of view.
+function placeCursor(
+  cursor: RemoteCursor,
+  page: HTMLElement,
+  board: HTMLElement | null,
+  track: HTMLElement | null,
+): Placement {
+  const p = page.getBoundingClientRect()
+  if (cursor.area === 'page') return { x: cursor.x, y: cursor.y, visible: true }
+
+  if (!board || !track) return { x: 0, y: 0, visible: false }
+  if (cursor.area === 'board') {
+    const t = track.getBoundingClientRect()
+    const x = t.left + cursor.x
+    const y = t.top + cursor.y
+    return { x: x - p.left, y: y - p.top, visible: within(board.getBoundingClientRect(), x, y) }
+  }
+
+  const list = track.querySelector<HTMLElement>(`[data-cursor-column="${cursor.columnId}"]`)
+  if (!list) return { x: 0, y: 0, visible: false }
+  const l = list.getBoundingClientRect() // reflects this viewer's scroll of that list
+  const x = l.left + cursor.x
+  const y = l.top + cursor.y
+  return { x: x - p.left, y: y - p.top, visible: within(list.parentElement!.getBoundingClientRect(), x, y) }
+}
+
+// One overlay for the whole board page, with exactly one element per remote user that's never
+// recreated. Moving between areas (page ↔ board ↔ a card list) just changes where that element
+// is placed, so the CSS transition keeps the motion continuous — no jump at the boundaries.
+// Positions are applied imperatively: after each update, and on this viewer's own scrolling or
+// resizing (instantly, so a cursor doesn't float behind content being scrolled).
+export function CursorOverlay() {
+  const ctx = useContext(CursorsContext)
+  if (!ctx) throw new Error('CursorOverlay must be used within LiveCursorsProvider')
+  const { cursors, pageRef, boardRef, trackRef } = ctx
   const { onlineMembers } = usePresence()
   const [now, setNow] = useState(() => Date.now())
+  const nodes = useRef(new Map<string, HTMLDivElement>())
+  const latest = useRef(cursors)
 
   // Re-evaluate idle fading once a second
   useEffect(() => {
@@ -159,26 +222,69 @@ export function CursorLayer({ area, columnId }: { area: CursorArea; columnId?: s
     return () => clearInterval(timer)
   }, [])
 
+  const placeAll = useCallback(
+    (instant: boolean) => {
+      const page = pageRef.current
+      if (!page) return
+      for (const [userId, el] of nodes.current) {
+        const cursor = latest.current[userId]
+        if (!cursor) continue
+        const { x, y, visible } = placeCursor(cursor, page, boardRef.current, trackRef.current)
+        // A cursor's first placement is instant too, so it doesn't glide in from the corner
+        const firstPlacement = el.dataset.placed !== 'true'
+        el.dataset.placed = 'true'
+        el.style.transition = instant || firstPlacement ? 'none' : ''
+        el.style.transform = `translate(${x}px, ${y}px)`
+        el.classList.toggle('is-offscreen', !visible)
+      }
+    },
+    [pageRef, boardRef, trackRef],
+  )
+
+  // New positions arrived (or cursors appeared/disappeared): animate to them
+  useLayoutEffect(() => {
+    latest.current = cursors
+    placeAll(false)
+  })
+
+  // My own scrolling (page, board or any list) and resizing move the anchors: follow instantly
+  useEffect(() => {
+    let frame = 0
+    const onScrollOrResize = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => placeAll(true))
+    }
+    window.addEventListener('scroll', onScrollOrResize, { capture: true, passive: true })
+    window.addEventListener('resize', onScrollOrResize)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('scroll', onScrollOrResize, { capture: true })
+      window.removeEventListener('resize', onScrollOrResize)
+    }
+  }, [placeAll])
+
   // Only people Phase 8 presence says are on this board right now — a closed tab or dropped
   // connection removes their cursor as soon as presence does
   const onlineById = new Map(onlineMembers.map((m) => [m.userId, m]))
 
   return (
-    <div className={`cursor-layer cursor-layer-${area}`} aria-hidden="true">
+    <div className="cursor-overlay" aria-hidden="true">
       {Object.entries(cursors).map(([userId, cursor]) => {
         const member = onlineById.get(userId)
-        if (!member || cursor.area !== area) return null
-        if (area === 'column' && cursor.columnId !== columnId) return null
+        if (!member) return null
         const color = colorForUser(userId)
         const label = member.name?.split(/\s+/)[0] || member.email?.split('@')[0] || 'Someone'
         const idle = now - cursor.at > IDLE_HIDE_MS
         return (
           <div
             key={userId}
+            ref={(el) => {
+              if (el) nodes.current.set(userId, el)
+              else nodes.current.delete(userId)
+            }}
             className={idle ? 'remote-cursor is-idle' : 'remote-cursor'}
             data-cursor-user={member.name ?? member.email ?? userId}
-            data-cursor-area={area}
-            style={{ transform: `translate(${cursor.x}px, ${cursor.y}px)` }}
+            data-cursor-area={cursor.area}
           >
             <svg width="18" height="22" viewBox="0 0 18 22">
               <path
