@@ -5,3 +5,4 @@ export class ConflictError extends Error {}
 export class ValidationError extends Error {} // 400
 export class PayloadTooLargeError extends Error {} // 413
 export class UnsupportedMediaTypeError extends Error {} // 415
+export class ExternalServiceError extends Error {} // 502 — a third party (e.g. Stripe) failed

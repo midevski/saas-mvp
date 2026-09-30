@@ -5,6 +5,8 @@
   --color-accent: #ff4d2e;
   --color-accent-600: #ec3f22;
   --color-accent-soft: #ffe7e0;
+  --color-danger: #c42626;
+  --color-danger-600: #a51d1d;
 
   --color-fg: #14161b;
   --color-fg-muted: #585c64;
@@ -248,6 +250,15 @@ code {
   padding: 0.45rem 0.8rem;
   font-size: 0.6875rem;
 }
+.btn-danger-solid {
+  border-color: var(--color-danger);
+  background: var(--color-danger);
+  color: var(--color-white);
+}
+.btn-danger-solid:hover:not(:disabled) {
+  border-color: var(--color-danger-600);
+  background: var(--color-danger-600);
+}
 .btn-block {
   width: 100%;
 }
@@ -390,6 +401,15 @@ code {
   color: var(--color-fg-muted);
 }
 
+.notice-dismissible {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 24px;
+  color: var(--color-fg);
+}
+
 .pill {
   display: inline-flex;
   align-items: center;
@@ -444,6 +464,28 @@ code {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* Destructive, irreversible settings (e.g. deleting an org) */
+.card-danger {
+  border-color: #c4262655;
+}
+.card-danger .card-header {
+  border-bottom-color: #c4262633;
+}
+.card-danger .eyebrow {
+  color: var(--color-danger);
+}
+.danger-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+.danger-list li::marker {
+  color: var(--color-danger);
 }
 
 .card-ink {

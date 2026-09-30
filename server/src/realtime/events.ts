@@ -39,6 +39,15 @@ export const CURSOR_UPDATE = 'cursor:update'
 // connect_error message when the handshake token is missing/invalid/expired
 export const UNAUTHORIZED = 'unauthorized'
 
+// Server -> every member of an org that was just deleted: { orgId, orgName }
+export const ORG_DELETED = 'org:deleted'
+
 export function orgRoom(orgId: string) {
   return `org:${orgId}`
+}
+
+// Every connected socket joins its user's room, so the server can reach a person anywhere in the
+// app — not just while they're on a board (e.g. to tell them an org they belong to was deleted)
+export function userRoom(userId: string) {
+  return `user:${userId}`
 }

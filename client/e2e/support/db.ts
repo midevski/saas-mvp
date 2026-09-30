@@ -36,3 +36,11 @@ export function activateSubscription(orgId: string) {
     )
   `)
 }
+
+// Keeps the org paid as far as our database is concerned, but with no Stripe subscription behind
+// it — so deleting the org never calls Stripe (whose cancel path is covered by
+// server/src/modules/orgs/orgDeletion.test.ts).
+export function detachStripeSubscription(orgId: string) {
+  if (!/^[a-f\d]{24}$/i.test(orgId)) throw new Error(`Not an ObjectId: ${orgId}`)
+  mongosh(`db.subscriptions.updateOne({ orgId: ObjectId('${orgId}') }, { $unset: { stripeSubscriptionId: '' } })`)
+}

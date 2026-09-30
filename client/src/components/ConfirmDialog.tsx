@@ -8,6 +8,10 @@ interface ConfirmDialogProps {
   onCancel: () => void
   cancelLabel?: string
   confirmDisabled?: boolean
+  // Shown on the confirm button while onConfirm runs
+  busyLabel?: string
+  // 'danger' for destructive, irreversible actions
+  confirmVariant?: 'accent' | 'danger'
   // An optional third choice between Cancel and Confirm (e.g. "Discard changes")
   extraAction?: { label: string; onClick: () => void }
 }
@@ -22,6 +26,8 @@ export function ConfirmDialog({
   onCancel,
   cancelLabel = 'Cancel',
   confirmDisabled = false,
+  busyLabel = 'Saving...',
+  confirmVariant = 'accent',
   extraAction,
 }: ConfirmDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -84,8 +90,13 @@ export function ConfirmDialog({
             {extraAction.label}
           </button>
         )}
-        <button type="button" className="btn btn-accent" disabled={busy || confirmDisabled} onClick={confirm}>
-          {busy ? 'Saving...' : confirmLabel}
+        <button
+          type="button"
+          className={confirmVariant === 'danger' ? 'btn btn-danger-solid' : 'btn btn-accent'}
+          disabled={busy || confirmDisabled}
+          onClick={confirm}
+        >
+          {busy ? busyLabel : confirmLabel}
         </button>
       </div>
     </dialog>

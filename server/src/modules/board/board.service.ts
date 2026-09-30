@@ -244,6 +244,22 @@ export async function deleteCard(cardId: string): Promise<{ cardId: string; colu
   return { cardId, columnId: card.columnId.toString() }
 }
 
+// For deleting an org: its board, columns and cards — and the cards' images in storage
+export async function deleteBoardForOrg(orgId: string): Promise<void> {
+  const board = await Board.findOne({ orgId })
+  if (!board) return
+  const cards = await Card.find({ boardId: board._id }).select('attachments')
+  await Card.deleteMany({ boardId: board._id })
+  await Column.deleteMany({ boardId: board._id })
+  await Board.deleteOne({ _id: board._id })
+  // Best-effort: the data is already gone; a storage hiccup only leaves an orphaned file
+  for (const attachment of cards.flatMap((c) => c.attachments ?? [])) {
+    deleteImage(attachment.publicId).catch((err: Error) =>
+      console.error(`[uploads] could not delete ${attachment.publicId}: ${err.message}`),
+    )
+  }
+}
+
 export async function addAttachment(
   cardId: string,
   attachment: { url: string; publicId: string; filename: string; uploadedBy: string },

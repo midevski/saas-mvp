@@ -5,6 +5,7 @@ import { CreateOrgForm } from './CreateOrgForm'
 import { MembersList } from './MembersList'
 import { PendingInvites } from './PendingInvites'
 import { GatedFeatureLink } from '../billing/GatedFeatureLink'
+import { DeleteOrgCard } from './DeleteOrgCard'
 
 export function DashboardPage() {
   const { user } = useAuth()
@@ -46,6 +47,8 @@ export function DashboardPage() {
         <div className="stack" style={{ gap: 24 }}>
           <GatedFeatureLink />
           <CreateOrgForm />
+          {/* Owners only; renders nothing for admins and members */}
+          <DeleteOrgCard key={currentOrg.id} org={currentOrg} />
         </div>
       </div>
     </>

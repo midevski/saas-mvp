@@ -18,6 +18,11 @@ export async function findMembership(orgId: string, userId: string) {
   return Membership.findOne({ orgId, userId })
 }
 
+export async function getOrgName(orgId: string): Promise<string | null> {
+  const org = await Org.findById(orgId).select('name')
+  return org ? org.name : null
+}
+
 function slugify(name: string) {
   const base = name
     .toLowerCase()

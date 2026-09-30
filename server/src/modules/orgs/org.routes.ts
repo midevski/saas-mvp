@@ -45,6 +45,10 @@ orgRouter.delete(
   orgController.removeMemberHandler,
 )
 
+// Owner only — the most destructive action in the app. Deliberately *not* behind
+// requireSubscription: an org must be deletable whether or not it's paying.
+orgRouter.delete('/orgs/:orgId', requireAuth, requireRole(['owner']), orgController.deleteOrgHandler)
+
 orgRouter.patch(
   '/orgs/:orgId/members/:userId',
   requireAuth,

@@ -1,4 +1,4 @@
-import { orgRoom } from './events'
+import { orgRoom, userRoom } from './events'
 import type { AppServer } from './socket'
 
 // Lets REST handlers (e.g. attachment uploads, which arrive over HTTP) push realtime events to
@@ -16,6 +16,17 @@ export function emitToOrg(orgId: string, event: string, payload: unknown, except
   if (!io) return
   const room = io.to(orgRoom(orgId))
   ;(exceptSocketId ? room.except(exceptSocketId) : room).emit(event, payload)
+}
+
+// Reach specific people wherever they are in the app (see userRoom)
+export function emitToUsers(userIds: string[], event: string, payload: unknown) {
+  if (!io || userIds.length === 0) return
+  io.to(userIds.map(userRoom)).emit(event, payload)
+}
+
+// Take every socket out of an org's board room (e.g. the org was deleted)
+export function closeOrgRoom(orgId: string) {
+  io?.in(orgRoom(orgId)).socketsLeave(orgRoom(orgId))
 }
 
 // Reads the X-Socket-Id header a client sends with REST calls (bounded; ignored if malformed)

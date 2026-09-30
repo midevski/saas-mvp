@@ -7,7 +7,7 @@ import type { AuthPayload } from '../middleware/requireAuth'
 import { verifyAccessToken } from '../modules/auth/auth.service'
 import { registerBoardHandlers } from './boardSocket'
 import { setRealtimeServer } from './emitter'
-import { orgRoom, PRESENCE_UPDATE, UNAUTHORIZED } from './events'
+import { orgRoom, PRESENCE_UPDATE, UNAUTHORIZED, userRoom } from './events'
 import { MemoryPresenceStore, PresenceBroadcaster, RedisPresenceStore, type PresenceStore } from './presence'
 
 export interface SocketData {
@@ -58,7 +58,10 @@ export function createSocketServer(
     }
   })
 
-  io.on('connection', (socket) => registerBoardHandlers(socket, presence, broadcaster))
+  io.on('connection', (socket) => {
+    void socket.join(userRoom(socket.data.user.userId))
+    registerBoardHandlers(socket, presence, broadcaster)
+  })
 
   async function closePresence() {
     broadcaster.close()

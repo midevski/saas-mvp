@@ -4,6 +4,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { env } from './config/env'
 import {
   ConflictError,
+  ExternalServiceError,
   ForbiddenError,
   NotFoundError,
   PayloadTooLargeError,
@@ -77,6 +78,10 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   }
   if (err instanceof UnsupportedMediaTypeError) {
     res.status(415).json({ error: err.message })
+    return
+  }
+  if (err instanceof ExternalServiceError) {
+    res.status(502).json({ error: err.message })
     return
   }
   // express.static with fallthrough: false -> missing upload

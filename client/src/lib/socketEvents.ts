@@ -35,3 +35,7 @@ export const COLUMN_DELETE = 'column:delete' // { columnId, moveCardsTo? }
 export const COLUMN_CREATED = 'column:created' // { column }
 export const COLUMN_UPDATED = 'column:updated' // { column }
 export const COLUMN_DELETED = 'column:deleted' // { columnId, movedCards? | deletedCardIds? }
+
+// Sent to every member of an org, wherever they are in the app, when its owner deletes it:
+// { orgId, orgName }
+export const ORG_DELETED = 'org:deleted'

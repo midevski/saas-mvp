@@ -1,7 +1,7 @@
 import type Stripe from 'stripe'
 import { stripe } from '../../config/stripe'
 import { env } from '../../config/env'
-import { NotFoundError } from '../../lib/errors'
+import { ExternalServiceError, NotFoundError } from '../../lib/errors'
 import { Org } from '../orgs/org.model'
 import { Subscription, type SubscriptionStatus } from './subscription.model'
 
@@ -130,6 +130,32 @@ export async function handleWebhookEvent(event: Stripe.Event) {
 
 export async function getSubscriptionForOrg(orgId: string) {
   return Subscription.findOne({ orgId })
+}
+
+// Statuses where Stripe will never charge again, so there's nothing to cancel
+const ENDED_STATUSES: SubscriptionStatus[] = ['canceled', 'incomplete_expired']
+
+// For deleting an org: stop billing first, then drop our cached record. Canceled immediately
+// (Stripe's default: no refund for the unused part of the period). If Stripe can't confirm the
+// cancellation, this throws — the caller must not delete anything, or the customer could keep
+// being billed for an org that no longer exists.
+export async function cancelAndRemoveSubscription(orgId: string): Promise<void> {
+  const subscription = await Subscription.findOne({ orgId })
+  if (!subscription) return
+
+  if (subscription.stripeSubscriptionId && !ENDED_STATUSES.includes(subscription.status)) {
+    try {
+      await stripe.subscriptions.cancel(subscription.stripeSubscriptionId)
+    } catch (err) {
+      // Already gone on Stripe's side is fine; anything else means we can't be sure billing stopped
+      if ((err as { code?: string }).code !== 'resource_missing') {
+        throw new ExternalServiceError(
+          "Couldn't cancel the Stripe subscription, so nothing was deleted. Please try again in a moment.",
+        )
+      }
+    }
+  }
+  await Subscription.deleteOne({ _id: subscription._id })
 }
 
 export async function isOrgSubscribed(orgId: string): Promise<boolean> {

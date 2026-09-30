@@ -5,6 +5,7 @@ import { ShellProvider, useShell } from '../context/ShellContext'
 import { InviteButton } from '../features/dashboard/InviteButton'
 import { Brand } from './Brand'
 import { UserMenu } from './UserMenu'
+import { OrgDeletedNotice } from './OrgDeletedNotice'
 
 const navClass = ({ isActive }: { isActive: boolean }) => (isActive ? 'nav-link active' : 'nav-link')
 
@@ -16,6 +17,7 @@ export function AppShell() {
     <ShellProvider headerSlot={headerSlot}>
       <AppHeader onSlotRef={setHeaderSlot} />
       <main className="container page">
+        <OrgDeletedNotice />
         <Outlet />
       </main>
     </ShellProvider>

@@ -3,7 +3,10 @@ import mongoose from 'mongoose'
 import { z } from 'zod'
 import { env } from '../../config/env'
 import { paramAsString } from '../../lib/params'
+import { ORG_DELETED } from '../../realtime/events'
+import { closeOrgRoom, emitToUsers } from '../../realtime/emitter'
 import * as orgService from './org.service'
+import { deleteOrg } from './orgDeletion.service'
 
 const createOrgSchema = z.object({ name: z.string().trim().min(1).max(100) })
 const inviteSchema = z.object({ email: z.string().email(), role: z.enum(['admin', 'member']) })
@@ -94,6 +97,29 @@ export async function revokeInviteHandler(req: Request, res: Response) {
   }
 
   await orgService.revokeInvite(paramAsString(req.params.orgId)!, inviteId)
+  res.status(204).end()
+}
+
+const deleteOrgSchema = z.object({ confirmName: z.string() })
+
+// Owner only (see route). The typed org name is checked here too, not just in the UI, so a stray
+// or scripted request can't delete an org by accident.
+export async function deleteOrgHandler(req: Request, res: Response) {
+  const orgId = paramAsString(req.params.orgId)!
+  const parsed = deleteOrgSchema.safeParse(req.body ?? {})
+  const org = await orgService.getOrgName(orgId)
+  if (!parsed.success || parsed.data.confirmName.trim() !== org) {
+    res.status(400).json({ error: "Type the organization's exact name to confirm" })
+    return
+  }
+
+  const deleted = await deleteOrg(orgId)
+
+  // Everyone who belonged to it finds out right away, wherever they are in the app; anyone on
+  // its board is taken out of the board's room
+  const payload = { orgId, orgName: deleted.orgName }
+  emitToUsers(deleted.memberUserIds, ORG_DELETED, payload)
+  closeOrgRoom(orgId)
   res.status(204).end()
 }
 
