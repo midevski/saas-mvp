@@ -1,5 +1,6 @@
 import { cancelAndRemoveSubscription } from '../billing/billing.service'
 import { deleteBoardForOrg } from '../board/board.service'
+import { deleteNotificationsForOrg } from '../notifications/notification.service'
 import { NotFoundError } from '../../lib/errors'
 import { Invite } from './invite.model'
 import { Membership } from './membership.model'
@@ -21,6 +22,7 @@ export async function deleteOrg(orgId: string): Promise<DeletedOrg> {
 
   await cancelAndRemoveSubscription(orgId)
   await deleteBoardForOrg(orgId)
+  await deleteNotificationsForOrg(orgId)
   await Invite.deleteMany({ orgId })
   await Membership.deleteMany({ orgId })
   await Org.deleteOne({ _id: org._id })

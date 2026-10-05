@@ -2079,3 +2079,170 @@ code {
   max-height: 8rem;
   overflow: auto;
 }
+
+/* ---------- Notifications (navbar bell) ---------- */
+
+.notif {
+  position: relative;
+}
+.notif-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-fg);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.notif-button:hover,
+.notif-button[aria-expanded='true'] {
+  border-color: var(--color-line-strong);
+  box-shadow: 0 0 0 3px var(--color-paper-2);
+}
+.notif-badge {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border: 2px solid var(--color-paper);
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: var(--color-white);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 13px;
+  text-align: center;
+}
+.notif-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: min(360px, calc(100vw - 32px));
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-paper);
+  box-shadow: var(--shadow-lift);
+  animation: modal-in 0.2s var(--ease-out-expo);
+  overflow: hidden;
+}
+.notif-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--color-line);
+}
+.notif-mark-all {
+  font-size: 0.8125rem;
+  color: var(--color-fg-muted);
+}
+.notif-mark-all:disabled {
+  opacity: 0.5;
+  cursor: default;
+  text-decoration: none;
+}
+.notif-list {
+  max-height: min(420px, 60vh);
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  overflow-y: auto;
+}
+.notif-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--color-fg-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.notif-item:hover,
+.notif-item:focus-visible {
+  background: var(--color-paper-2);
+  outline: none;
+}
+.notif-item.is-unread {
+  color: var(--color-fg);
+}
+.notif-item-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.notif-item-text {
+  font-size: 0.875rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.notif-item.is-unread .notif-item-text {
+  font-weight: 500;
+}
+.notif-item-time {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--color-fg-faint);
+}
+.notif-unread-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+.notif-empty {
+  margin: 0;
+  padding: 20px 16px;
+  font-size: 0.875rem;
+  color: var(--color-fg-muted);
+  text-align: center;
+}
+.notif-more {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  border: 0;
+  border-top: 1px solid var(--color-line);
+  background: transparent;
+  color: var(--color-fg-muted);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+.notif-more:hover {
+  background: var(--color-paper-2);
+}
+
+/* The comment a notification linked to: briefly highlighted when the card opens */
+.activity-comment.is-highlighted .activity-comment-body {
+  animation: comment-highlight 2.4s ease-out;
+  border-color: var(--color-accent);
+}
+@keyframes comment-highlight {
+  from {
+    background: var(--color-accent-soft);
+  }
+  to {
+    background: var(--color-paper);
+  }
+}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../../lib/api/axiosInstance'
 import { useSocket } from '../../context/SocketContext'
 import { useOrg } from '../../context/OrgContext'
@@ -103,6 +103,12 @@ function LiveBoard({ orgId }: { orgId: string }) {
   const [openCardId, setOpenCardId] = useState<string | null>(null)
   // The column whose delete dialog is open
   const [deletingColumnId, setDeletingColumnId] = useState<string | null>(null)
+  // Deep links (e.g. from a notification): ?card=<id> opens that card, &comment=<id> highlights it
+  const [searchParams, setSearchParams] = useSearchParams()
+  const linkedCardId = searchParams.get('card')
+  const linkedCommentId = searchParams.get('comment')
+  const [highlightActivityId, setHighlightActivityId] = useState<string | null>(null)
+  const [linkNotice, setLinkNotice] = useState<string | null>(null)
   // Per-browser only (localStorage): never sent to the server or other users
   const { isCollapsed, toggle: toggleCollapsed } = useCollapsedColumns(state?.board.id ?? null)
   const { arrange: arrangeColumns, moveColumn: moveColumnLocally } = useColumnOrder(state?.board.id ?? null)
@@ -184,6 +190,27 @@ function LiveBoard({ orgId }: { orgId: string }) {
     },
     [socket, join],
   )
+
+  // Once the board has loaded, follow the link (state adjusted during render, React's pattern for
+  // reacting to a changed input) ...
+  const linkKey = linkedCardId && state ? `${linkedCardId}:${linkedCommentId ?? ''}` : null
+  const [followedLink, setFollowedLink] = useState<string | null>(null)
+  if (linkKey !== followedLink) {
+    setFollowedLink(linkKey)
+    if (linkKey && state) {
+      if (state.cards.some((c) => c.id === linkedCardId)) {
+        setOpenCardId(linkedCardId)
+        setHighlightActivityId(linkedCommentId)
+        setLinkNotice(null)
+      } else {
+        setLinkNotice('That card no longer exists — it may have been deleted.')
+      }
+    }
+  }
+  // ... then drop it from the URL, so a reload or closing the card doesn't reopen it
+  useEffect(() => {
+    if (linkKey) setSearchParams({}, { replace: true })
+  }, [linkKey, setSearchParams])
 
   if (!state) return <p className="eyebrow">Loading board...</p>
 
@@ -283,6 +310,14 @@ function LiveBoard({ orgId }: { orgId: string }) {
             {error}
           </p>
         )}
+        {linkNotice && (
+          <div className="notice notice-dismissible" role="status">
+            <span>{linkNotice}</span>
+            <button type="button" className="modal-close" aria-label="Dismiss" onClick={() => setLinkNotice(null)}>
+              ×
+            </button>
+          </div>
+        )}
         <div className="board" ref={boardRef}>
           <div className="board-track" ref={trackRef}>
             {columns.map((column, index) => (
@@ -324,7 +359,11 @@ function LiveBoard({ orgId }: { orgId: string }) {
           key={openCard.id}
           orgId={orgId}
           card={openCard}
-          onClose={() => setOpenCardId(null)}
+          onClose={() => {
+            setOpenCardId(null)
+            setHighlightActivityId(null)
+          }}
+          highlightActivityId={highlightActivityId}
           onSave={updateCard}
           onCardChanged={(card) => dispatch({ type: 'updated', card })}
           onResync={join}

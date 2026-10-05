@@ -17,6 +17,8 @@ interface CardDetailViewProps {
   onCardChanged: (card: CardData) => void
   // Re-sync the board from the server after a failed change
   onResync: () => void
+  // A comment to scroll to and highlight (e.g. opened from a mention notification)
+  highlightActivityId?: string | null
 }
 
 interface UploadState {
@@ -42,7 +44,15 @@ function uploadError(err: unknown, filename: string) {
   }
 }
 
-export function CardDetailView({ orgId, card, onClose, onSave, onCardChanged, onResync }: CardDetailViewProps) {
+export function CardDetailView({
+  orgId,
+  card,
+  onClose,
+  onSave,
+  onCardChanged,
+  onResync,
+  highlightActivityId = null,
+}: CardDetailViewProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const descriptionRef = useRef<HTMLTextAreaElement>(null)
   const [title, setTitle] = useState(card.title)
@@ -310,7 +320,7 @@ export function CardDetailView({ orgId, card, onClose, onSave, onCardChanged, on
 
         <ChecklistSection orgId={orgId} card={card} onCardChanged={onCardChanged} onResync={onResync} />
 
-        <ActivityFeed orgId={orgId} cardId={card.id} />
+        <ActivityFeed orgId={orgId} cardId={card.id} highlightId={highlightActivityId} />
       </div>
 
       {preview && <Lightbox attachment={preview} onClose={() => setPreview(null)} />}

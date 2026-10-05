@@ -45,6 +45,12 @@ export const CURSOR_UPDATE = 'cursor:update'
 // connect_error message when the handshake token is missing/invalid/expired
 export const UNAUTHORIZED = 'unauthorized'
 
+// Notifications, sent only to the recipient's own user room (any page, not just a board).
+// { notification } — a new one for you
+export const NOTIFICATION_NEW = 'notification:new'
+// { notificationIds: string[] } | { all: true } — marked read (e.g. in another of your tabs)
+export const NOTIFICATION_READ = 'notification:read'
+
 // Server -> every member of an org that was just deleted: { orgId, orgName }
 export const ORG_DELETED = 'org:deleted'
 

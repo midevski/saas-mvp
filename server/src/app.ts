@@ -15,6 +15,7 @@ import { authRouter } from './modules/auth/auth.routes'
 import { orgRouter } from './modules/orgs/org.routes'
 import { billingRouter, billingWebhookRouter } from './modules/billing/billing.routes'
 import { boardRouter } from './modules/board/board.routes'
+import { notificationRouter } from './modules/notifications/notification.routes'
 
 export const app = express()
 
@@ -54,6 +55,7 @@ app.use('/auth', authRouter)
 app.use(orgRouter)
 app.use(billingRouter)
 app.use(boardRouter)
+app.use(notificationRouter)
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof NotFoundError) {

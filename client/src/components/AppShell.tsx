@@ -5,6 +5,7 @@ import { ShellProvider, useShell } from '../context/ShellContext'
 import { InviteButton } from '../features/dashboard/InviteButton'
 import { Brand } from './Brand'
 import { UserMenu } from './UserMenu'
+import { NotificationBell } from './NotificationBell'
 import { OrgDeletedNotice } from './OrgDeletedNotice'
 
 const navClass = ({ isActive }: { isActive: boolean }) => (isActive ? 'nav-link active' : 'nav-link')
@@ -83,6 +84,7 @@ function AppHeader({ onSlotRef }: { onSlotRef: (el: HTMLElement | null) => void 
           {/* Owners/admins only (InviteButton hides itself otherwise) */}
           <InviteButton orgId={urlOrgId} onInvited={notifyInvited} compact />
           <span className="header-divider" />
+          <NotificationBell />
           <UserMenu />
         </div>
       </div>

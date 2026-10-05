@@ -22,7 +22,7 @@ export default defineConfig([
       // Each context file exports its Provider component plus the matching hook
       'react-refresh/only-export-components': [
         'error',
-        { allowConstantExport: true, allowExportNames: ['useAuth', 'useOrg', 'useSocket', 'usePresence', 'useShell'] },
+        { allowConstantExport: true, allowExportNames: ['useAuth', 'useOrg', 'useSocket', 'usePresence', 'useShell', 'useNotifications'] },
       ],
     },
   },

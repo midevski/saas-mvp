@@ -31,6 +31,12 @@ export const CURSOR_MOVE = 'cursor:move'
 // Server -> others in the room: { userId, x, y }
 export const CURSOR_UPDATE = 'cursor:update'
 
+// Notifications — only ever sent to you (your user room), on any page.
+// { notification } — a new one
+export const NOTIFICATION_NEW = 'notification:new'
+// { notificationIds: string[] } | { all: true } — marked read, e.g. in another of your tabs
+export const NOTIFICATION_READ = 'notification:read'
+
 // Columns. Adding, renaming and deleting are shared; order and collapse are each viewer's own
 // layout, kept in this browser and never sent. Client -> server:
 export const COLUMN_CREATE = 'column:create' // { boardId, name }

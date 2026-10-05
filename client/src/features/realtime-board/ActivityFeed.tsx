@@ -61,7 +61,16 @@ function useNow(intervalMs = 30_000) {
 // A card's timeline: what people said (comments) and what they did (system entries — moves,
 // checklist ticks, images, edits), newest first. New and deleted entries from anyone show up
 // live over the socket. Comments can be deleted (by their author, or an owner/admin), not edited.
-export function ActivityFeed({ orgId, cardId }: { orgId: string; cardId: string }) {
+export function ActivityFeed({
+  orgId,
+  cardId,
+  highlightId = null,
+}: {
+  orgId: string
+  cardId: string
+  // Scrolled into view and highlighted once the feed loads (e.g. the comment you were mentioned in)
+  highlightId?: string | null
+}) {
   const { socket } = useSocket()
   const { user } = useAuth()
   const { orgs } = useOrg()
@@ -75,6 +84,7 @@ export function ActivityFeed({ orgId, cardId }: { orgId: string; cardId: string 
   const [pendingDelete, setPendingDelete] = useState<ActivityEntry | null>(null)
   const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null)
   const deletedIds = useRef(new Set<string>())
+  const scrolledTo = useRef<string | null>(null)
   const now = useNow()
   const base = `/orgs/${orgId}/board/cards/${cardId}`
 
@@ -130,6 +140,14 @@ export function ActivityFeed({ orgId, cardId }: { orgId: string; cardId: string 
       socket.off('connect', load)
     }
   }, [socket, cardId, load, addEntries, removeEntry])
+
+  useEffect(() => {
+    if (!highlightId || !entries || scrolledTo.current === highlightId) return
+    const el = document.getElementById(`activity-${highlightId}`)
+    if (!el) return
+    scrolledTo.current = highlightId
+    el.scrollIntoView({ block: 'center' })
+  }, [entries, highlightId])
 
   async function post(e?: FormEvent) {
     e?.preventDefault()
@@ -229,6 +247,7 @@ export function ActivityFeed({ orgId, cardId }: { orgId: string; cardId: string 
                 key={entry.id}
                 entry={entry}
                 now={now}
+                highlighted={entry.id === highlightId}
                 onDelete={canDelete(entry) ? () => setPendingDelete(entry) : undefined}
               />
             ) : (
@@ -270,9 +289,19 @@ function authorName(entry: ActivityEntry) {
   return entry.author?.name ?? 'System'
 }
 
-function CommentEntry({ entry, now, onDelete }: { entry: ActivityEntry; now: number; onDelete?: () => void }) {
+function CommentEntry({
+  entry,
+  now,
+  onDelete,
+  highlighted = false,
+}: {
+  entry: ActivityEntry
+  now: number
+  onDelete?: (() => void) | undefined
+  highlighted?: boolean
+}) {
   return (
-    <li className="activity-comment">
+    <li id={`activity-${entry.id}`} className={`activity-comment${highlighted ? ' is-highlighted' : ''}`}>
       {entry.author && <MemberAvatar userId={entry.author.id} name={entry.author.name} email={null} size="sm" />}
       <div className="activity-comment-body">
         <div className="activity-meta">

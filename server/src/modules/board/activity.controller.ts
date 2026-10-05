@@ -3,6 +3,7 @@ import mongoose from 'mongoose'
 import { z } from 'zod'
 import { NotFoundError, ValidationError } from '../../lib/errors'
 import { paramAsString } from '../../lib/params'
+import { notifyMentionsSafely } from '../notifications/notification.service'
 import * as activityService from './activity.service'
 import { cardInOrg } from './board.controller'
 
@@ -31,6 +32,15 @@ export async function addCommentHandler(req: Request, res: Response) {
   // Everyone on the board (the poster's other tabs included); the poster's tab also applies the
   // response below and de-duplicates by id
   await activityService.publishActivity(orgId, cardId, entry)
+  // Tell the people mentioned (best-effort: never fails the comment itself)
+  await notifyMentionsSafely({
+    orgId,
+    cardId,
+    activityId: entry._id.toString(),
+    actorId: req.user!.userId,
+    mentionedUserIds: mentions,
+    commentText: text,
+  })
   const [dto] = await activityService.toActivityDTOs([entry])
   res.status(201).json({ entry: dto })
 }

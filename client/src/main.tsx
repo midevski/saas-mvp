@@ -6,6 +6,7 @@ import App from './App.tsx'
 import { AuthProvider } from './context/AuthContext.tsx'
 import { OrgProvider } from './context/OrgContext.tsx'
 import { SocketProvider } from './context/SocketContext.tsx'
+import { NotificationProvider } from './context/NotificationContext.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -13,7 +14,9 @@ createRoot(document.getElementById('root')!).render(
       <AuthProvider>
         <SocketProvider>
           <OrgProvider>
-            <App />
+            <NotificationProvider>
+              <App />
+            </NotificationProvider>
           </OrgProvider>
         </SocketProvider>
       </AuthProvider>
